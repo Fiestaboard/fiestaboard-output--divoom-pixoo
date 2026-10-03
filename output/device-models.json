@@ -1,0 +1,37 @@
+[
+  {
+    "id": "divoom_pixoo64",
+    "label": "Divoom Pixoo 64",
+    "technology": "led_matrix",
+    "family": "divoom",
+    "geometry": {
+      "kind": "pixels",
+      "width": 64,
+      "height": 64
+    },
+    "color": {
+      "kind": "rgb",
+      "bitDepth": 24
+    },
+    "charset": "led_3x5",
+    "animation": {
+      "delivery": "sequence",
+      "maxFps": 12.5,
+      "maxFrames": 32,
+      "minFrameMs": 80,
+      "notes": "Draw/SendHttpGif: one POST per frame (PicNum frames, PicOffset index, PicSpeed ms, PicData base64 RGB888, PicWidth must be 64), played locally. HARD BUDGET: a transition gets 32 frames start to finish and is compressed, never cut, so it always lands on the final frame. RISK, from the same sources: (1) every uploaded animation first shows a ~5 s 'Loading..' overlay; (2) frames must be pushed ~150 ms–1 s apart, so a 32-frame change takes 5–32 s to upload; (3) the device stops responding after ~300 pushes — about 9 animated changes at 32 frames — until rebooted; (4) frames beyond ~32–40 can crash it; Draw/ResetHttpGifId must precede each animation and Draw/CommandList cannot batch frames. Adapter mitigation to decide: keep a push counter and schedule a reboot (or fall back to single-frame pushes) before ~250 pushes, and/or author fewer frames per change (16 ≈ 18 changes between reboots). The official doc's '≤ 60 frames' is unverified (JS-rendered page).",
+      "sources": [
+        "https://raw.githubusercontent.com/cyanheads/pixoo-toolkit/main/AGENTS.md",
+        "https://github.com/gickowtf/pixoo-homeassistant/pull/158",
+        "https://github.com/SomethingWithComputers/pixoo",
+        "https://raw.githubusercontent.com/Grayda/pixoo_api/main/NOTES.md",
+        "https://doc.divoom-gz.com/web/#/12?page_id=93 (unverified: not fetchable)"
+      ]
+    },
+    "font": "3x5",
+    "pixelShape": "square",
+    "legacy": {
+      "preset": "pixoo64"
+    }
+  }
+]
