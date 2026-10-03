@@ -30,8 +30,8 @@ plus uncommitted changes:
 | File | sha256 |
 | --- | --- |
 | `output/device-models.json` | `ae3d62d471e22e1f8070bba2ced4e21213170465cde2959db302909b21893559` |
-| draft `device-model.schema.json` | `caed241721fa358c60b5a343c1a4268dd21f3798cd11b0e370166eef8952e6ce` |
-| draft `character-set.schema.json` | `3eb64fc7da10d182f827f5d0e01b37f1102015c18c6f3e7b2d05359c558476e5` |
+| draft `device-model.schema.json` | `b8c9241e410cfb85634859adb21e2c8e92d1a370d5566194f2202b7f20436426` |
+| draft `character-set.schema.json` | `480451113d4cf4f2ce77af4c455f229eb30c1fbf7e8e1ae288ececa1c40a4665` |
 
 The first release (`v0.1.0`) will be tagged once the schema publishes in a FiestaUI release and
 this data validates against it. Until then, pin by commit.
