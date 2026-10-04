@@ -1,0 +1,40 @@
+{
+  "id": "divoom_pixoo",
+  "name": "Divoom Pixoo 64",
+  "version": "0.1.0",
+  "description": "Show your FiestaBoard pages on a Divoom Pixoo 64 LED matrix over your local network.",
+  "author": "FiestaBoard Team",
+  "repository": "https://github.com/Fiestaboard/fiestaboard-output--divoom-pixoo",
+  "icon": "grid-3x3",
+  "category": "output",
+  "plugin_type": "output",
+  "fiestaboard_version": ">=10.0.0",
+  "data_files": ["output/device-models.json"],
+  "output": {
+    "output_api": 1,
+    "device_models": {"$ref": "output/device-models.json"},
+    "delivery": "push",
+    "min_interval_ms": 1000,
+    "read_back": {"supported": false, "cost": "cheap", "suggested_interval_s": 30},
+    "native_transitions": [],
+    "settings_schema": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "title": "Device address",
+          "description": "The Pixoo 64's IP address or hostname on your network (for example 192.168.1.50). Find it in the Divoom app under Device Settings.",
+          "minLength": 1
+        },
+        "brightness": {
+          "type": "integer",
+          "title": "Brightness",
+          "description": "Screen brightness from 0 to 100. Leave empty to keep the device's own setting.",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": ["host"]
+    }
+  }
+}

@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# Local CI import scaffold (recreated by ci.yml and by run_tests.sh)
+/plugins/
+/fiestaboard-core/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
