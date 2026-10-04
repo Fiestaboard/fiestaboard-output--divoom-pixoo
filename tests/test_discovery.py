@@ -80,11 +80,21 @@ def nets(*cidrs: str) -> list[ipaddress.IPv4Network]:
     return [ipaddress.IPv4Network(c) for c in cidrs]
 
 
-def test_the_browser_hint_comes_before_the_container_address():
+def test_a_docker_bridge_address_is_not_searched_when_the_browser_named_the_lan():
     # FiestaBoard in Docker bridge mode sees 172.17.x; the browser's address is the LAN.
-    assert candidate_subnets(hint_host="192.168.1.20", local_ip="172.17.0.2") == nets(
-        "192.168.1.0/24", "172.17.0.0/24"
-    )
+    assert candidate_subnets(hint_host="192.168.1.20", local_ip="172.17.0.2") == nets("192.168.1.0/24")
+
+
+def test_a_docker_bridge_address_is_not_searched_when_the_user_typed_a_network():
+    assert candidate_subnets(subnet="192.168.4.0/24", local_ip="172.18.0.5") == nets("192.168.4.0/24")
+
+
+def test_a_docker_bridge_address_is_searched_when_it_is_all_there_is():
+    assert candidate_subnets(local_ip="172.17.0.2") == nets("172.17.0.0/24")
+
+
+def test_the_browser_hint_comes_before_fiestaboards_own_lan_address():
+    assert candidate_subnets(hint_host="192.168.1.20", local_ip="10.0.0.7") == nets("192.168.1.0/24", "10.0.0.0/24")
 
 
 def test_an_explicit_subnet_comes_first_and_duplicates_are_dropped():
@@ -174,13 +184,13 @@ def test_find_my_pixoo_sweeps_the_hint_subnet_before_the_local_one(monkeypatch):
     import plugins.divoom_pixoo as pixoo
 
     swept: list[list[tuple[str, int]]] = []
-    monkeypatch.setattr(pixoo, "local_ipv4", lambda: "172.17.0.2")
+    monkeypatch.setattr(pixoo, "local_ipv4", lambda: "10.0.0.7")
     monkeypatch.setattr(pixoo, "sweep", lambda http, targets, **kw: swept.append(targets) or [])
     outcome = build({}).action_find_pixoo({"hint_host": "192.168.1.20"})
     targets = swept[0]
     assert targets[0] == ("192.168.1.1", 80)
     assert targets[253] == ("192.168.1.254", 80)
-    assert targets[254] == ("172.17.0.1", 80)
+    assert targets[254] == ("10.0.0.1", 80)
     assert len(targets) == 2 * 254
     assert outcome.status == "warning"
     assert outcome.devices == ()

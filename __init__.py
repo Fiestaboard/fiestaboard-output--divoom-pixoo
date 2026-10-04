@@ -200,6 +200,11 @@ def candidate_subnets(
     the browser's address (*hint_host*: in Docker bridge mode FiestaBoard's
     own address is a container network), then FiestaBoard's own /24.
 
+    FiestaBoard's own address is skipped when it is in 172.16.0.0/12 (where
+    Docker puts its bridge networks) and the user already named a network:
+    a Pixoo is never on a container network, so sweeping it only costs time.
+    With nothing else to go on it is still searched.
+
     Raises:
         ValueError: *subnet* is malformed, not private, or larger than a /22.
     """
@@ -215,10 +220,16 @@ def candidate_subnets(
         address = _lan_address(value)
         if address is None:
             continue
+        if value is local_ip and found and address in _DOCKER_BRIDGES:
+            continue
         network = ipaddress.IPv4Network(f"{address}/24", strict=False)
         if not any(network.subnet_of(n) for n in found):
             found.append(network)
     return found
+
+
+#: Where Docker allocates its bridge networks (and nothing a Pixoo joins).
+_DOCKER_BRIDGES = ipaddress.IPv4Network("172.16.0.0/12")
 
 
 def _device(ip: str, port: int, name: str = "Pixoo 64", label: str | None = None) -> dict[str, Any]:
