@@ -17,24 +17,27 @@ design system both read it from here rather than keeping their own copies.
 
 | File | Contents |
 | --- | --- |
-| [`output/device-models.json`](./output/device-models.json) | The `divoom_pixoo64` DeviceModel: 64×64 RGB pixels, `led_3x5` character set and 3×5 font (a 10-row × 16-column grid), square pixels, and `sequence` animation (up to 32 frames, 80 ms minimum per frame) with the device's known push limits and their sources |
+| [`output/device-models.json`](./output/device-models.json) | The `divoom_pixoo64` DeviceModel: 64×64 RGB pixels, `led_3x5` character set and 3×5 font (a 10-row × 16-column grid), square-pixel appearance, and `sequence` animation (up to 32 frames, 80 ms minimum per frame) with the device's known push limits and their sources |
 
 The data is plain JSON validated against FiestaUI's DeviceModel JSON Schema. It carries no code.
 
 ### Provenance
 
-The current data was handed over by the FiestaUI LED-matrix work and validates against the
-**draft** schema from FiestaUI branch `feat/led-matrix-display`, revision 7, base commit `81ef225`
-plus uncommitted changes:
+The data comes from the FiestaUI LED-matrix work and validates against FiestaUI's DeviceModel
+JSON Schema at commit `a70b7198f3ab6d7f96faf75f13260a4f2f5fceed` (FiestaUI PR #326, the LED data
+layer; part of a stack that has not been released yet):
 
 | File | sha256 |
 | --- | --- |
-| `output/device-models.json` | `ae3d62d471e22e1f8070bba2ced4e21213170465cde2959db302909b21893559` |
-| draft `device-model.schema.json` | `b8c9241e410cfb85634859adb21e2c8e92d1a370d5566194f2202b7f20436426` |
-| draft `character-set.schema.json` | `480451113d4cf4f2ce77af4c455f229eb30c1fbf7e8e1ae288ececa1c40a4665` |
+| `output/device-models.json` | `e7cbfff32e91afd3d7b3ce39fa27cd7335cba76a326698221fc14100d8607d6f` |
+| `device-model.schema.json` | `ef3129dac12f01f9a515b9d1798376881475472fa79dfd168ff5ee5c6f349ffb` |
+| `character-set.schema.json` | `69efe686fc58060361d279be453b12f44395fa1a879dcac7c82ce559628437b3` |
 
-The first release (`v0.1.0`) will be tagged once the schema publishes in a FiestaUI release and
-this data validates against it. Until then, pin by commit.
+Preview cosmetics (square pixels at 0.82 of the pitch, off-LED and substrate colours) live in the
+model's `appearance` block; they never change what is sent to the device.
+
+The first release (`v0.1.0`) will be tagged once that schema publishes in a FiestaUI release.
+Until then, pin by commit.
 
 ### Using the data from JavaScript
 
