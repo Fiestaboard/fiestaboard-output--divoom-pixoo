@@ -21,20 +21,16 @@ def tool():
 
 def test_it_shows_a_still_then_one_transition_and_times_every_request(tool, pixoo):
     out = io.StringIO()
-    report = tool.run(pixoo.host, pause_s=0, overlay_s=0, out=out)
+    report = tool.run(pixoo.host, pause_s=0, ready_s=0, out=out)
 
     commands = [c["command"] for c in report["calls"]]
-    # Exactly: reset + still, then reset + the animation + the still after it.
-    assert commands[:2] == ["Draw/ResetHttpGifId", "Draw/SendHttpGif"]
-    assert commands[2] == "Draw/ResetHttpGifId"
-    animation = [c for c in report["calls"] if c.get("PicNum", 1) > 1]
-    assert 2 <= len(animation) <= 32
+    # Exactly: reset + seed + still, then the change, which the Pixoo snaps: one more still.
+    assert commands == ["Draw/ResetHttpGifId", "Draw/GetHttpGifId", "Draw/SendHttpGif", "Draw/SendHttpGif"]
     assert commands == [c.get("Command") for c in pixoo.commands]
-    assert report["calls"][-1]["PicNum"] == 1
     assert all(c["status"] == 200 and c["ms"] >= 0 and "PicData" not in c for c in report["calls"])
-    assert report["pic_ids"] == [1] + [1] * len(animation) + [2]
+    assert report["pic_ids"] == [1, 2]
     assert [s["result"]["success"] for s in report["steps"]] == [True, True]
-    assert report["steps"][1]["transition"]["id"] == "flip"
+    assert report["steps"][1]["transition"]["id"] == "none"
 
     text = out.getvalue()
     assert "Draw/SendHttpGif" in text and "PicIDs:" in text and "PicData" not in text
@@ -45,23 +41,23 @@ def test_the_first_message_is_hello_fiesta(tool, pixoo):
 
     from .conftest import build, render
 
-    tool.run(pixoo.host, pause_s=0, overlay_s=0, out=io.StringIO())
+    tool.run(pixoo.host, pause_s=0, ready_s=0, out=io.StringIO())
     rows, cols = build({"host": "192.0.2.10"}).board_geometry
     expected = render(cells_from_codes(text_to_board_array("HELLO\nFIESTA", rows, cols)))
     import base64
 
-    assert pixoo.commands[1]["PicData"] == base64.b64encode(expected).decode("ascii")
+    assert pixoo.commands[2]["PicData"] == base64.b64encode(expected).decode("ascii")
 
 
 def test_a_failing_device_is_reported_with_its_errors(tool, pixoo):
     pixoo.mode = "http_500"
-    report = tool.run(pixoo.host, pause_s=0, overlay_s=0, out=io.StringIO())
+    report = tool.run(pixoo.host, pause_s=0, ready_s=0, out=io.StringIO())
     assert [s["result"]["success"] for s in report["steps"]] == [False, False]
     assert {c["status"] for c in report["calls"]} == {500}
 
 
 def test_an_unreachable_device_records_the_error(tool):
-    report = tool.run("127.0.0.1:9", pause_s=0, overlay_s=0, out=io.StringIO())
+    report = tool.run("127.0.0.1:9", pause_s=0, ready_s=0, out=io.StringIO())
     assert report["calls"] and all("error" in c for c in report["calls"])
     assert "error" in json.dumps(report)
 

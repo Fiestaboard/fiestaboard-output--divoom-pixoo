@@ -97,8 +97,14 @@ def test_brightness_is_set_once_after_the_first_frame_lands(pixoo, make_plugin):
     plugin = make_plugin(brightness=40)
     plugin.write(frame(1), native=None, cancel=CancelToken())
     plugin.write(frame(2), native=None, cancel=CancelToken())
-    assert pixoo.names() == ["Draw/ResetHttpGifId", "Draw/SendHttpGif", "Channel/SetBrightness", "Draw/SendHttpGif"]
-    assert pixoo.commands[2] == {"Command": "Channel/SetBrightness", "Brightness": 40}
+    assert pixoo.names() == [
+        "Draw/ResetHttpGifId",
+        "Draw/GetHttpGifId",
+        "Draw/SendHttpGif",
+        "Channel/SetBrightness",
+        "Draw/SendHttpGif",
+    ]
+    assert pixoo.commands[3] == {"Command": "Channel/SetBrightness", "Brightness": 40}
 
 
 def test_without_a_brightness_setting_the_device_keeps_its_own(pixoo, make_plugin):

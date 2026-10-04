@@ -35,6 +35,7 @@ def test_requests_go_through_the_helper_with_setup_marked_and_the_plugin_timeout
     assert plugin.write(frame(1), native=None, cancel=CancelToken()).success
     assert [(r.method, r.url, r.json["Command"], r.setup) for r in seen] == [
         ("POST", "http://192.0.2.10/post", "Draw/ResetHttpGifId", True),
+        ("POST", "http://192.0.2.10/post", "Draw/GetHttpGifId", True),
         ("POST", "http://192.0.2.10/post", "Draw/SendHttpGif", False),
         ("POST", "http://192.0.2.10/post", "Channel/SetBrightness", True),
     ]

@@ -1,7 +1,7 @@
 {
   "id": "divoom_pixoo",
   "name": "Divoom Pixoo 64",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Show your FiestaBoard pages on a Divoom Pixoo 64 LED matrix over your local network.",
   "author": "FiestaBoard Team",
   "repository": "https://github.com/Fiestaboard/fiestaboard-output--divoom-pixoo",
@@ -9,13 +9,21 @@
   "category": "output",
   "plugin_type": "output",
   "fiestaboard_version": ">=10.0.0",
-  "data_files": ["output/device-models.json"],
+  "data_files": [
+    "output/device-models.json"
+  ],
   "output": {
     "output_api": 1,
-    "device_models": {"$ref": "output/device-models.json"},
+    "device_models": {
+      "$ref": "output/device-models.json"
+    },
     "delivery": "push",
     "min_interval_ms": 1000,
-    "read_back": {"supported": false, "cost": "cheap", "suggested_interval_s": 30},
+    "read_back": {
+      "supported": false,
+      "cost": "cheap",
+      "suggested_interval_s": 30
+    },
     "native_transitions": [],
     "settings_schema": {
       "type": "object",
@@ -26,7 +34,11 @@
           "description": "The Pixoo 64's IP address or hostname on your network (for example 192.168.1.50). Use Find my Pixoo, or type it in.",
           "minLength": 1,
           "ui:widget": "device-picker",
-          "ui:options": {"action": "find_pixoo", "value_key": "host", "label_key": "label"}
+          "ui:options": {
+            "action": "find_pixoo",
+            "value_key": "host",
+            "label_key": "label"
+          }
         },
         "brightness": {
           "type": "integer",
@@ -34,9 +46,17 @@
           "description": "Screen brightness from 0 to 100. Leave empty to keep the device's own setting.",
           "minimum": 0,
           "maximum": 100
+        },
+        "mac": {
+          "type": "string",
+          "title": "Device MAC address",
+          "description": "Optional. Filled in by the Divoom cloud lookup so the lookup can find this Pixoo again if its IP address changes. 12 hex digits.",
+          "pattern": "^[0-9a-fA-F]{12}$"
         }
       },
-      "required": ["host"]
+      "required": [
+        "host"
+      ]
     },
     "actions": [
       {
@@ -62,9 +82,20 @@
       {
         "id": "cloud_lookup",
         "label": "Ask Divoom's servers which Pixoos are on your network",
-        "description": "Sends a request to Divoom's cloud (app.divoom-gz.com). Divoom sees your public IP address and answers with the Pixoos registered from it. Use this only if Find my Pixoo finds nothing."
+        "description": "Sends one request to Divoom's cloud (app.divoom-gz.com). Divoom sees your public IP address and answers with the Pixoos registered from it. If this board has a saved MAC address, it finds that Pixoo again at its current address. Use this only if Find my Pixoo finds nothing.",
+        "result_fields": {
+          "host": {
+            "fills": "host"
+          },
+          "mac": {
+            "fills": "mac"
+          }
+        }
       },
-      {"id": "test_connection", "label": "Test connection"}
+      {
+        "id": "test_connection",
+        "label": "Test connection"
+      }
     ]
   }
 }

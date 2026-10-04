@@ -16,6 +16,12 @@ misbehave on purpose:
   ``Draw/SendHttpGif`` pushes with no ``Draw/ResetHttpGifId`` in between,
   the device stops answering every command.
 
+PicIDs behave as the 2026-10-04 hardware lab measured: ``Draw/GetHttpGifId``
+answers the next id (0 right after a reset); an upload displays only when its
+PicID is above the last accepted one, and a reused or lower PicID still
+answers ``error_code`` 0 (recorded in ``ignored``). ``ignore_reset`` makes
+the device keep its last id across a reset.
+
 ``on_command`` (``fn(command_dict, index)``) runs before the answer, so a
 test can fire a cancel token after the k-th push.
 
@@ -31,6 +37,7 @@ from typing import Any, Callable
 
 SEND = "Draw/SendHttpGif"
 RESET = "Draw/ResetHttpGifId"
+GET_ID = "Draw/GetHttpGifId"
 GET_CONF = "Channel/GetAllConf"
 SET_BRIGHTNESS = "Channel/SetBrightness"
 
@@ -60,6 +67,11 @@ class MockPixoo:
         self.freeze_after: int | None = None
         self.on_command: Callable[[dict[str, Any], int], None] | None = None
         self._pushes_since_reset = 0
+        #: The device's PicID state (lab-verified semantics, see _answer).
+        self.last_pic_id = 0
+        self.ignore_reset = False
+        self.displayed: list[dict[str, Any]] = []
+        self.ignored: list[dict[str, Any]] = []
         self._frozen = False
         self._release = threading.Event()
         self._lock = threading.Lock()
@@ -146,11 +158,25 @@ class MockPixoo:
         name = command.get("Command")
         if name == RESET:
             self._pushes_since_reset = 0
+            if not self.ignore_reset:
+                self.last_pic_id = 0
+        elif name == GET_ID:
+            # The next id, or 0 right after a reset (lab-verified).
+            return 200, {"error_code": 0, "PicId": self.last_pic_id + 1 if self.last_pic_id else 0}
         elif name == SEND:
             self._pushes_since_reset += 1
             if self.freeze_after is not None and self._pushes_since_reset > self.freeze_after:
                 self._frozen = True
                 return None, None
+            pic_id = command.get("PicID", 0)
+            # Lab-verified: only a PicID above the last accepted one displays;
+            # a reused or lower one still answers error_code 0.
+            if pic_id > self.last_pic_id:
+                self.displayed.append(command)
+                if command.get("PicOffset", 0) == command.get("PicNum", 1) - 1:
+                    self.last_pic_id = pic_id
+            elif command.get("PicOffset", 0) == 0:
+                self.ignored.append(command)
         if name == GET_CONF:
             return 200, ALL_CONF
         return 200, {"error_code": 0}

@@ -4,17 +4,16 @@ Shows your FiestaBoard pages on a Divoom Pixoo 64 LED matrix over your local net
 
 **→ [Setup Guide](./docs/SETUP.md)**
 
-> **Beta, not yet verified on hardware.** This plugin needs FiestaBoard 10.0.0 or later with
-> **Settings → Beta → Output Plugins** turned on. Several device limits it relies on are
-> community reports that have not been confirmed on current firmware. See
-> [Verify on your device](#verify-on-your-device).
+> **Beta.** This plugin needs FiestaBoard 10.0.0 or later with **Settings → Beta → Output
+> Plugins** turned on. Its device behaviour was measured on a real Pixoo 64 on 2026-10-04; two
+> community reports are still unverified. See [Verify on your device](#verify-on-your-device).
 
 ## Overview
 
 The Pixoo 64 is a 64×64 RGB LED matrix with a local HTTP API. This output plugin turns each
 FiestaBoard page into pixels with FiestaBoard's own LED renderer and pushes them to the device.
-Page changes play FiestaBoard's flip transition, uploaded as one short animation that always ends
-on the new page.
+Page changes cut straight to the new page, in about half a second: the Pixoo cannot play an
+animation once without looping it or showing a loading screen (see [How it works](#how-it-works)).
 
 ## Device
 
@@ -25,8 +24,8 @@ on the new page.
 | Character grid | **10 rows × 16 columns** (3×5 font with 1-pixel gaps) |
 | Character set | `led_3x5`: A–Z, 0–9, board punctuation, colour tiles |
 | Connection | `POST http://<host>/post` on your LAN; no account, no cloud, no password |
-| Write spacing | At least 1 second between writes (enforced by FiestaBoard, not the plugin) |
-| Animation | One upload per page change: up to 32 frames, at least 80 ms each |
+| Write spacing | At least 1 second between writes (enforced by FiestaBoard, not the plugin); 0.5 s verified safe |
+| Animation | None: page changes snap (`stream` at 2 frames a second, below every transition) |
 | Read back | None: the device cannot report what it shows |
 
 A 10 × 16 grid is larger than the 3 × 15 minimum every FiestaBoard board must reach, so pages
@@ -63,6 +62,7 @@ to the `led_3x5` character set), so colours and icons in a page reach the screen
 | --- | --- | --- | --- | --- |
 | `host` | string | Yes | — | The Pixoo's IP address or hostname, for example `192.168.1.50`. A port (`192.168.1.50:80`) is accepted; `http://` and any path are ignored. |
 | `brightness` | integer, 0–100 | No | the device's own | Screen brightness, set after the first frame lands. Leave it out to keep what you set in the Divoom app. |
+| `mac` | string, 12 hex digits | No | — | The Pixoo's MAC address. Filled in by the Divoom cloud lookup, which then uses it to find this Pixoo again after its IP address changes. |
 
 No setting is secret: the Pixoo's local API has no authentication.
 
@@ -85,8 +85,11 @@ settings, or in your router's list of connected devices.
 
 **Ask Divoom's servers which Pixoos are on your network** is a separate, opt-in button. It sends
 one request to Divoom's cloud (`app.divoom-gz.com`). Divoom sees your public IP address and
-answers with the Pixoos registered from it; the plugin keeps only each one's local address and
-name. It runs only when you click it.
+answers with the Pixoos registered from it; the plugin keeps only each one's local address,
+name and MAC address. It runs only when you click it. When it finds exactly one Pixoo it fills in
+the address and the MAC; with a MAC saved, it finds that Pixoo again at its current address (handy
+when your router hands it a new one). The local network search cannot see MAC addresses, and the
+Pixoo does not advertise itself over mDNS (checked).
 
 Both go through FiestaBoard's device helper, so `FIESTABOARD_OUTPUTS_ALLOW_HOSTS` applies. It is
 unset in production. Development setups set it to their mocks, which blocks a sweep: set it
@@ -97,9 +100,11 @@ empty (or add your Pixoo's address) to search a real network.
 - Sends FiestaBoard pages to a Pixoo 64 on your local network, with no cloud service
 - **Find my Pixoo**: searches your network for the device; manual entry always works
 - Optional, clearly labelled lookup through Divoom's cloud when the search finds nothing
-- FiestaBoard's flip transition, uploaded as one animation within the device's 32-frame budget
-- Always lands on the new page: after the animation plays, the target is pushed as a still frame
-- Guards against the reported upload freeze by resetting the device's GIF counter regularly
+- Fast, clean page changes: one single-frame push, shown in about half a second, no loading screen
+- Text and colours drawn into the image (the device's own text command is an overlay that every
+  new image wipes)
+- Keeps the device's picture ids increasing, so no update is silently ignored, and resets them
+  every 32 pushes
 - Gives up a write as soon as a newer page arrives, between any two requests
 - Connection test that tells unreachable, timed-out, wrong-device and blocked-host cases apart
 - Optional brightness setting
@@ -112,30 +117,41 @@ empty (or add your Pixoo's address) to search a real network.
 pixels base64-encoded in `PicData`.
 
 **A page change** (`write_transition`): FiestaBoard resolves the board's LED transition for the
-Pixoo model (by default the flip: one frame per 80 ms step, no half-flaps, at most 32 frames) and
-hands the plugin the before and after pages. The plugin plans exactly that transition with core's
-LED renderer, the same frames FiestaUI previews, and uploads them as **one** GIF: one POST per
-frame, all with the same `PicID`, `PicNum` = frame count and `PicOffset` 0, 1, 2… The first
-frame (the page already on screen) is not re-sent. The device loops an uploaded GIF, so once it
-has loaded and played through, the plugin pushes the new page as a still frame.
+Pixoo model. The model streams at 2 frames a second, below every transition's minimum, so the
+answer is `none`: the plugin pushes the new page as one still frame, and FiestaBoard's preview cuts
+the same way. This is deliberate. On the device, measured with a camera:
 
-**Transition plugins** (`write_sequence`): when a board uses one of FiestaBoard's transition
-plugins instead, its frames are uploaded the same way, each shown for its own duration but never
-less than 80 ms.
+- an uploaded animation **loops forever**; there is no play-once option;
+- an upload longer than about 1.2 s (more than about 3 frames) shows a **"LOADING…" screen** from
+  about 1.5 s after the first frame until about 0.5 s after the last: 1.3 s for 8 frames, 4.8 s
+  for 32, 6.3 s for 40;
+- pushing a still after an animation leaves the old loop running, with its first frame replaced,
+  for **about 5 s** before the still settles;
+- a single-frame push shows in about 0.5 s with no loading screen.
 
-**`PicID` and resets.** The plugin sends `Draw/ResetHttpGifId` and restarts `PicID` at 1:
+**Explicit sequences** (`write_sequence`, which FiestaBoard does not use for this model): the
+frames go up back-to-back as one GIF, at most 40 (longer runs are thinned evenly, first and last
+kept), each shown at least 80 ms. The device loops it; once it is ready and has played once, the
+plugin pushes the last frame as a still, with the 5 s glitch above.
 
-- before the first upload after FiestaBoard starts or the settings change;
-- before every animation;
-- after an upload that failed or was cut short (the device's counter is then unknown);
-- when the next upload would take it past 32 frame pushes since the last reset.
+**`PicID`s.** The device shows an upload only if its `PicID` is higher than the last one it
+accepted; a reused or lower id still answers `error_code` 0 but is silently ignored, so 0 means
+"accepted", not "shown". The plugin therefore:
+
+- starts a session with `Draw/ResetHttpGifId`, then seeds its counter from `Draw/GetHttpGifId`
+  (which answers the next id, or 0 right after a reset; 0 means start at 1). A session starts with
+  the first upload after FiestaBoard starts or the settings change, and after any upload that
+  failed or was cut short;
+- counts up by one per upload, never reusing or lowering an id;
+- resets again, restarting at 1, before the push that would pass 32 since the last reset. A reset
+  does not clear the screen and needs no wait.
 
 **Timeouts and cancelling.** Every request goes through FiestaBoard's device helper
 (`self.http`), which enforces `FIESTABOARD_OUTPUTS_ALLOW_HOSTS`, follows no redirects and refuses
-requests once a write is cancelled; the reset and brightness commands are marked as setup
+requests once a write is cancelled; the reset, id and brightness commands are marked as setup
 requests. Each request has a 3 s connect and 5 s read timeout. The plugin
-checks whether a newer page has arrived before every request and while it waits between frames,
-and stops there. A device error is reported as a failed write, never raised; three failed writes in
+checks whether a newer page has arrived before every request and while it waits for an
+explicit sequence to play, and stops there. A device error is reported as a failed write, never raised; three failed writes in
 a row make FiestaBoard pause this device for a few minutes.
 
 **Rendering.** All drawing goes through FiestaBoard core's LED renderer (`src.led`, imported
@@ -145,27 +161,38 @@ point is `DivoomPixoo.render()`: it takes 0–71 codes or rich cells.
 
 ## Verify on your device
 
-These device facts come from community libraries and notes (listed under `sources` in
-[`output/device-models.json`](./output/device-models.json)) and have **not** been confirmed on
-current firmware. Each is a named constant at the top of `__init__.py`. If you own a Pixoo 64,
-please check them and report what you see in an issue.
+**Verified** on a Pixoo 64 (hardware 92) on 2026-10-04, with a camera on the panel. Details and
+timings are in the model's `animation.notes` in
+[`output/device-models.json`](./output/device-models.json).
+
+| Fact | Measured | What the plugin does |
+| --- | --- | --- |
+| Single-frame push | Shows in about 0.5 s, no loading screen | Every page change is one single-frame push |
+| Push spacing | 20 pushes at 1.0 s and at 0.5 s, all shown in order | FiestaBoard spaces writes 1 s apart (`min_interval_ms` 1000, a conservative default) |
+| Animations | Loop forever; no play-once | Snaps instead of animating |
+| Loading screen | From about 1.5 s into an upload until about 0.5 s after the last frame; none under about 1.2 s | Snaps; an explicit sequence waits it out (`ANIMATION_READY_S`) |
+| Landing on a still after an animation | Old loop keeps running for about 5 s | Only on the explicit sequence path, documented |
+| Frames per upload | 59 accepted, but playback wrapped at about 55; 40 played completely | `SEQUENCE_MAX_FRAMES` = 40 |
+| `PicSpeed` | Milliseconds per frame; 80 ms and 250 ms honoured | Never below 80 ms (`MIN_FRAME_MS`) |
+| `PicID` | Shown only if higher than the last accepted; reused or lower ids are ignored with `error_code` 0 | Increasing counter, seeded from `Draw/GetHttpGifId` |
+| `Draw/ResetHttpGifId` | Does not clear the screen; no wait needed afterwards | Reset per session and every 32 pushes |
+| Colour and orientation | `PicData` is RGB, row-major from the top left, no mirroring | Sent as rendered |
+| Brightness | `Channel/SetBrightness` 0–100 works | `brightness` setting |
+| Discovery | A /24 search with `Channel/GetAllConf` took about 2 s; the cloud lookup answered in 0.3 s; no mDNS | Find my Pixoo; opt-in cloud lookup |
+| Text command | `Draw/SendHttpText` is an overlay that a new image wipes | Text is drawn into the image |
+
+**Still unverified.** If you own a Pixoo 64, please check these and report what you see in an issue.
 
 | What to check | Reported | Plugin setting | How to check |
 | --- | --- | --- | --- |
-| Safe push rate | about 1 push per second | FiestaBoard's floor, `min_interval_ms` 1000 | Change pages quickly for several minutes; the device must keep answering |
-| Spacing between frames of one upload | 150 ms to 1 s | `FRAME_GAP_S` = 0.15 | Watch transitions; look for dropped or garbled frames |
-| Freeze after many pushes without a reset | about 300 pushes | `RESET_AFTER_PUSHES` = 32 | Leave it running for a day of page changes; it must not freeze |
-| "Loading.." overlay before an animation plays | about 5 s | `LOADING_OVERLAY_S` = 5.0 | Change pages and time the overlay |
-| Does a **single-frame** push show "Loading.." too? | unknown | — | Push one still page. If it does, static updates need another command |
-| Maximum frames in one upload | 32–40 frames; the official doc says 60 | the model's `maxFrames` 32 | Uploads over 32 should never be sent; confirm 32 plays cleanly |
-| Does an uploaded GIF loop? | yes | the still-frame push after each animation | If it plays once and stops on its last frame, the still push can go |
-| Brightness command | `Channel/SetBrightness` 0–100 | `brightness` setting | Set it and watch the screen |
+| Freeze after many pushes without a reset | about 300 pushes (the lab stayed under 25 between resets) | `RESET_AFTER_PUSHES` = 32 | Leave it running for a day of page changes; it must not freeze |
+| Other firmware versions | Behaviour may differ; the lab did not read the firmware version | — | Note your firmware version (Divoom app) with any report |
 
 ## Device data
 
 | File | Contents |
 | --- | --- |
-| [`output/device-models.json`](./output/device-models.json) | The `divoom_pixoo64` DeviceModel: 64×64 RGB pixels, `led_3x5` character set and 3×5 font (a 10-row × 16-column grid), square-pixel appearance, and `sequence` animation (up to 32 frames, 80 ms minimum per frame) with the device's known push limits and their sources |
+| [`output/device-models.json`](./output/device-models.json) | The `divoom_pixoo64` DeviceModel: 64×64 RGB pixels, `led_3x5` character set and 3×5 font (a 10-row × 16-column grid), square-pixel appearance, and `stream` animation at 2 frames a second (so FiestaBoard snaps), with the hardware-lab evidence and sources |
 
 The data is plain JSON validated against FiestaUI's DeviceModel JSON Schema. The plugin's manifest
 points at it (`"device_models": {"$ref": "output/device-models.json"}`), so FiestaBoard, FiestaUI
@@ -173,19 +200,22 @@ and this plugin read one copy.
 
 ### Provenance
 
-The data comes from the FiestaUI LED-matrix work and validates against FiestaUI's DeviceModel
-JSON Schema at commit `a70b7198f3ab6d7f96faf75f13260a4f2f5fceed` (FiestaUI PR #326, the LED data
-layer; part of a stack that has not been released yet):
+The model started as FiestaUI's `divoom_pixoo64` from the LED-matrix work (commit
+`a70b7198f3ab6d7f96faf75f13260a4f2f5fceed`, FiestaUI PR #326). Its `animation` block was then
+rewritten from the 2026-10-04 hardware lab: `stream` at `maxFps` 2, with the lab's evidence in
+`notes` and `sources`. FiestaUI mirrors this model field for field in its built-in. Every other
+field is unchanged. The file validates against FiestaUI's DeviceModel JSON Schema as vendored in
+FiestaBoard.
 
 | File | sha256 |
 | --- | --- |
-| `output/device-models.json` | `e7cbfff32e91afd3d7b3ce39fa27cd7335cba76a326698221fc14100d8607d6f` |
+| `output/device-models.json` | `63e4be3e4850fa7e360f454ae011aa4411e4eab2dbe39301addfb39bbe8bee70` |
 | `device-model.schema.json` | `ef3129dac12f01f9a515b9d1798376881475472fa79dfd168ff5ee5c6f349ffb` |
 | `character-set.schema.json` | `69efe686fc58060361d279be453b12f44395fa1a879dcac7c82ce559628437b3` |
 
 Preview cosmetics (square pixels at 0.82 of the pitch, off-LED and substrate colours) live in the
 model's `appearance` block; they never change what is sent to the device. A test pins the file's
-sha256, so changing it is a deliberate re-vendor.
+sha256, so a change to it is always deliberate.
 
 ### Using the data from JavaScript
 
@@ -216,8 +246,8 @@ fail, hang or freeze on purpose; a network fence refuses any other host. The sui
 FiestaBoard's output-plugin conformance suite (`tests/test_conformance.py`) and needs 80% coverage.
 
 `tools/try_device.py` is a local, development-only check against a real Pixoo: it shows one
-still frame, then plays one transition, and prints the timing and reply of every request. It
-never loops. Pass the device address on the command line only:
+still frame, then makes one page change (a snap, as FiestaBoard resolves it), and prints the timing
+and reply of every request and the PicIDs used. It never loops. Pass the device address on the command line only:
 
 ```bash
 PYTHONPATH=/path/to/FiestaBoard python3 tools/try_device.py --host 192.168.1.50

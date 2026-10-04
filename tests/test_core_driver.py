@@ -41,7 +41,7 @@ def test_a_dead_device_is_a_failed_write_core_can_report(pixoo, make_plugin):
     assert driver.last_write_error
 
 
-def test_core_renders_a_page_change_through_write_transition(pixoo, make_plugin):
+def test_core_snaps_a_page_change_to_one_still_push(pixoo, make_plugin):
     now = [20_000.0]
     driver = OutputPluginDriver(make_plugin(), clock=lambda: now[0])
     assert driver.takes_transitions
@@ -52,6 +52,5 @@ def test_core_renders_a_page_change_through_write_transition(pixoo, make_plugin)
     result = driver.render(frame(2), with_outcome=True)
 
     assert (result.success, result.was_sent) == (True, True)
-    pushes = pixoo.pushes()
-    assert pushes[0]["PicNum"] > 1  # the board's resolved flip, as one GIF
-    assert pushes[-1]["PicNum"] == 1  # then the still target
+    # The Pixoo model resolves no LED transition: one single-frame push, no GIF.
+    assert [c["PicNum"] for c in pixoo.pushes()] == [1]

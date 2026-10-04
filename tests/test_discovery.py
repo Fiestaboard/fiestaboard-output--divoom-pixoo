@@ -255,26 +255,58 @@ def cloud(plugin: DivoomPixoo, status: int, body) -> list:
     return seen
 
 
-def test_the_cloud_lookup_asks_divoom_and_returns_only_address_and_name():
+#: The lab-verified reply shape (values here are made up).
+def lan_reply(*devices: dict) -> dict:
+    return {"ReturnCode": 0, "ReturnMessage": "", "DeviceList": list(devices)}
+
+
+def device(ip: str, mac: str, name: str = "Pixoo64") -> dict:
+    return {"DeviceName": name, "DeviceId": 300000001, "DevicePrivateIP": ip, "DeviceMac": mac, "Hardware": 92}
+
+
+def test_the_cloud_lookup_posts_an_empty_body_and_lists_address_name_and_mac():
     plugin = build({})
     seen = cloud(
         plugin,
         200,
-        {
-            "ReturnCode": 0,
-            "ReturnMessage": "",
-            "DeviceList": [
-                {"DeviceName": "Pixoo64", "DeviceId": 300000001, "DevicePrivateIP": "192.168.1.50", "DeviceMac": "aabbccddeeff"},
-                {"DeviceName": "No address", "DeviceId": 2},
-            ],
-        },
+        lan_reply(device("192.168.1.50", "AABBCCDDEEFF"), device("192.168.1.51", "a1b2c3d4e5f6", "Kitchen"), {"DeviceName": "No address", "DeviceId": 2}),
     )
     outcome = plugin.action_cloud_lookup({})
-    assert [(r.method, r.url) for r in seen] == [("POST", "https://app.divoom-gz.com/Device/ReturnSameLANDevice")]
+    assert [(r.method, r.url, r.json) for r in seen] == [("POST", "https://app.divoom-gz.com/Device/ReturnSameLANDevice", {})]
     assert outcome.status == "ok"
     assert outcome.devices == (
-        {"ip": "192.168.1.50", "port": 80, "host": "192.168.1.50", "label": "Pixoo64 (192.168.1.50)", "hostname": "Pixoo64"},
+        {"ip": "192.168.1.50", "port": 80, "host": "192.168.1.50", "label": "Pixoo64 (192.168.1.50)", "hostname": "Pixoo64", "mac": "aabbccddeeff"},
+        {"ip": "192.168.1.51", "port": 80, "host": "192.168.1.51", "label": "Kitchen (192.168.1.51)", "hostname": "Kitchen", "mac": "a1b2c3d4e5f6"},
     )
+    # Two devices: the user picks; nothing is filled in on their behalf.
+    assert outcome.fields == {}
+
+
+def test_a_single_device_fills_in_its_address_and_mac():
+    plugin = build({})
+    cloud(plugin, 200, lan_reply(device("192.168.1.50", "AA:BB:CC:DD:EE:FF")))
+    outcome = plugin.action_cloud_lookup({})
+    assert {k: v.value for k, v in outcome.fields.items()} == {"host": "192.168.1.50", "mac": "aabbccddeeff"}
+    assert not any(v.secret for v in outcome.fields.values())
+
+
+def test_with_a_saved_mac_the_lookup_re_finds_the_device_at_its_new_address():
+    plugin = build({"host": "192.168.1.50", "mac": "aabbccddeeff"})
+    cloud(plugin, 200, lan_reply(device("192.168.1.51", "a1b2c3d4e5f6"), device("192.168.1.77", "AABBCCDDEEFF")))
+    outcome = plugin.action_cloud_lookup({})
+    assert outcome.status == "ok"
+    assert {k: v.value for k, v in outcome.fields.items()} == {"host": "192.168.1.77", "mac": "aabbccddeeff"}
+    assert [d["ip"] for d in outcome.devices] == ["192.168.1.77"]
+    assert "192.168.1.77" in outcome.message
+
+
+def test_a_saved_mac_that_divoom_does_not_list_is_reported_with_the_others():
+    plugin = build({"mac": "aabbccddeeff"})
+    cloud(plugin, 200, lan_reply(device("192.168.1.51", "a1b2c3d4e5f6")))
+    outcome = plugin.action_cloud_lookup({})
+    assert outcome.status == "warning"
+    assert outcome.fields == {}
+    assert [d["ip"] for d in outcome.devices] == ["192.168.1.51"]
 
 
 @pytest.mark.parametrize(

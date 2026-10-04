@@ -7,9 +7,9 @@ import json
 
 from .conftest import _ERRORS, MANIFEST, PLUGIN_DIR
 
-#: output/device-models.json is FiestaUI's divoom_pixoo64 model, byte for byte
-#: (README "Provenance"). Changing it is a deliberate re-vendor, not an edit.
-DEVICE_MODELS_SHA256 = "e7cbfff32e91afd3d7b3ce39fa27cd7335cba76a326698221fc14100d8607d6f"
+#: output/device-models.json: the divoom_pixoo64 model as revised by the 2026-10-04
+#: hardware lab (README "Provenance"). Changing it is a deliberate edit that FiestaUI mirrors.
+DEVICE_MODELS_SHA256 = "63e4be3e4850fa7e360f454ae011aa4411e4eab2dbe39301addfb39bbe8bee70"
 
 
 def test_the_manifest_loads_as_an_output_plugin():
@@ -22,8 +22,8 @@ def test_the_capabilities_come_from_the_pixoo_model():
     caps = MANIFEST.output.capabilities
     assert caps.technology == "led_matrix"
     assert caps.delivery == "push"
-    assert caps.animation == "sequence"
-    assert caps.max_frames == 32
+    assert caps.animation == "stream"
+    assert caps.max_frames is None
     assert caps.min_interval_ms == 1000
     assert caps.read_back.supported is False
     assert caps.native_transitions == frozenset()
@@ -32,7 +32,7 @@ def test_the_capabilities_come_from_the_pixoo_model():
 
 def test_no_board_setting_is_secret():
     props = MANIFEST.output.settings_schema["properties"]
-    assert set(props) == {"host", "brightness"}
+    assert set(props) == {"host", "brightness", "mac"}
     assert not any(p.get("secret") or p.get("ui:widget") == "password" for p in props.values())
 
 
@@ -55,6 +55,18 @@ def test_the_actions_are_find_my_pixoo_cloud_lookup_and_test():
     assert not actions["find_pixoo"].input_schema.get("required")
     assert actions["cloud_lookup"].label == "Ask Divoom's servers which Pixoos are on your network"
     assert actions["cloud_lookup"].input_schema is None
+
+
+def test_the_mac_setting_is_optional_and_filled_by_the_cloud_lookup():
+    schema = MANIFEST.output.settings_schema
+    assert "mac" not in schema["required"]
+    assert schema["properties"]["mac"]["pattern"] == "^[0-9a-fA-F]{12}$"
+    cloud = next(a for a in MANIFEST.output.actions if a.id == "cloud_lookup")
+    assert {name: spec.fills for name, spec in cloud.result_fields.items()} == {"host": "host", "mac": "mac"}
+
+
+def test_the_version_is_bumped_for_the_lab_revision():
+    assert MANIFEST.version == "0.2.0"
 
 
 def test_package_json_carries_the_manifest_version():

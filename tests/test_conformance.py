@@ -54,4 +54,7 @@ def test_the_plugin_is_conformant():
         decode=decode,
     ).assert_conformant()
     # Every rule ran (device_traffic included) except the secret check.
-    assert all(s.startswith("device_key: no secret") for s in report.skipped), report.skipped
+    assert sorted(report.skipped) == [
+        "device_key: no secret values in the config to look for",
+        "sequence: animation is 'stream'",
+    ], report.skipped

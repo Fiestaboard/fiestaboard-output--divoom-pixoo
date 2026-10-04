@@ -3,36 +3,37 @@
 Drives one Pixoo 64 over its local HTTP API (``POST http://<host>/post``,
 one JSON command per request). Core owns the policy — the send floor
 (``min_interval_ms``, 1 s between writes), dedupe, preemption, the write
-budget and which LED transition a board runs — and this plugin moves pixels:
+budget and which LED transition a board runs — and this plugin moves pixels.
 
-- **Render.** Frames are laid out with core's LED renderer (``src.led``,
-  through ``src.plugins``) for the board's device model and character set
-  (``self.device_model``, ``self.character_set``: 3x5 face, 10 x 16 cells
-  on 64 x 64) and rasterised to RGB888. A frame is 0-71 codes
-  (:meth:`write`) or rich cells (:meth:`write_cells`: colour spans, blocks,
-  icons); both go through :meth:`DivoomPixoo.render`.
-- **write / write_cells** push one still frame: ``Draw/SendHttpGif`` with
-  ``PicNum`` 1.
-- **write_transition** renders exactly the LED transition core resolved for
-  the board (``resolve_led_transition`` for its model: the flip FiestaUI
-  previews, already fitted to 32 frames of >= 80 ms), uploads it as ONE
-  multi-frame GIF (same ``PicID``, ``PicOffset`` 0..n-1), then — once it has
-  played — pushes the target as a still, so the device never loops it.
-- **write_sequence** uploads a transition plugin's frames the same way.
-- **PicID policy.** ``Draw/ResetHttpGifId`` before the first upload of an
-  instance, before every animation, after any failed or cancelled upload,
-  and once :data:`RESET_AFTER_PUSHES` frames went up since the last reset.
+What the 2026-10-04 hardware lab (camera-timed, on a real Pixoo 64) settled:
+
+- **The Pixoo snaps.** An uploaded animation loops forever (there is no
+  play-once), an upload of more than ~3 frames shows a "LOADING" overlay
+  (~6 s for 40 frames), and landing on a still after an animation glitches
+  for ~5 s. A single-frame push shows in ~0.5 s with no overlay. So the
+  device model streams at ``maxFps`` 2, under every LED transition's
+  minimum: the resolved transition is ``none`` and preview and device both
+  cut to the new page.
+- **write / write_cells / write_transition** push one still frame:
+  ``Draw/SendHttpGif`` with ``PicNum`` 1. Text is drawn into the image
+  (``Draw/SendHttpText`` is an overlay that every new image wipes).
+- **write_sequence** (only an explicit caller; core never asks this model)
+  uploads up to :data:`SEQUENCE_MAX_FRAMES` frames back-to-back as one GIF,
+  which LOOPS on the device; once it is ready and has played once, the
+  target is pushed as a still — expect the ~5 s landing glitch.
+- **PicID policy.** A session (the first upload of an instance, or after a
+  failed or cancelled one) starts with ``Draw/ResetHttpGifId`` and is
+  seeded from ``Draw/GetHttpGifId`` (0 means 1); after
+  :data:`RESET_AFTER_PUSHES` frame pushes it resets again and restarts at 1.
+  IDs only ever go up within a session: the device silently ignores a
+  reused or lower PicID while still answering ``error_code`` 0, so 0 means
+  "accepted", not "shown".
 
 All device traffic goes through ``self.http`` (core's helper: the
 ``FIESTABOARD_OUTPUTS_ALLOW_HOSTS`` fence, no redirects, the run's cancel
-token) with ``(connect, read)`` timeouts; the reset and brightness commands
-are marked ``setup=True``. Waits (pacing, the play-out) wait on the cancel
-token. Device failures come back as a failed :class:`WriteResult`, never as
-an exception.
-
-Several device facts below are community-reported and **unverified** on
-current firmware; each is a named constant, listed in the README's
-"Verify on your device" section.
+token) with ``(connect, read)`` timeouts; the reset, id and brightness
+commands are marked ``setup=True``. Device failures come back as a failed
+:class:`WriteResult`, never as an exception.
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ from typing import Any
 import requests
 
 from src.plugins import (
+    ActionField,
     ActionOutcome,
     BoardToken,
     CancelToken,
@@ -80,22 +82,23 @@ __all__ = ["DivoomPixoo", "PixooError", "candidate_subnets", "is_pixoo_reply", "
 
 # --- device facts (each one: see README "Verify on your device") ----------------------------
 
-#: Frame POSTs between two ``Draw/ResetHttpGifId``. Community reports say the
-#: device stops answering after ~300 pushes without a reset; 32 matches the
-#: SomethingWithComputers/pixoo library's default refresh and keeps an order
-#: of magnitude of headroom. UNVERIFIED on current firmware.
+#: Frame POSTs between two ``Draw/ResetHttpGifId``: the community convention
+#: (SomethingWithComputers/pixoo resets every 32). The reported freeze after
+#: ~300 pushes without a reset was NOT tested on hardware (the lab stayed
+#: under 25 ids between resets); a reset needs no wait afterwards (verified).
 RESET_AFTER_PUSHES = 32
 
-#: Pause between two POSTs of one upload. Reports put the safe push spacing
-#: anywhere from ~150 ms to 1 s; core's floor already spaces whole writes by
-#: 1 s, so this only paces the frames of one animation. UNVERIFIED.
-FRAME_GAP_S = 0.15
+#: The most frames one explicit sequence upload carries. The lab saw 59
+#: frames accepted but playback wrap at ~55 (later frames silently dropped);
+#: 40 played completely, and community reports crashes above ~40.
+SEQUENCE_MAX_FRAMES = 40
 
-#: How long the device shows its "Loading.." overlay before it plays an
-#: uploaded animation (reported ~5 s). The still-frame push waits this out,
-#: plus the play time, so the animation is seen before the still replaces it.
-#: UNVERIFIED, including whether single-frame pushes show it too.
-LOADING_OVERLAY_S = 5.0
+#: The shortest ``PicSpeed`` an upload asks for (80 ms was honoured).
+MIN_FRAME_MS = 80
+
+#: After the last frame of a multi-frame upload, the LOADING overlay stays
+#: ~0.5 s before the animation shows (lab-measured).
+ANIMATION_READY_S = 0.5
 
 #: ``(connect, read)`` timeouts for one command.
 CONNECT_TIMEOUT_S = 3.0
@@ -109,6 +112,7 @@ STILL_SPEED_MS = 1000
 
 SEND_GIF = "Draw/SendHttpGif"
 RESET_GIF_ID = "Draw/ResetHttpGifId"
+GET_GIF_ID = "Draw/GetHttpGifId"
 GET_ALL_CONF = "Channel/GetAllConf"
 SET_BRIGHTNESS = "Channel/SetBrightness"
 
@@ -227,6 +231,12 @@ def _device(ip: str, port: int, name: str = "Pixoo 64", label: str | None = None
     }
 
 
+def normalise_mac(raw: Any) -> str | None:
+    """A MAC as 12 lowercase hex digits (separators dropped), or ``None``."""
+    text = re.sub(r"[^0-9a-fA-F]", "", str(raw or "")).lower()
+    return text if len(text) == 12 else None
+
+
 def _probe(http: OutputHttp, ip: str, port: int, per_host_s: float) -> bool:
     try:
         response = http.post(
@@ -303,16 +313,15 @@ class DivoomPixoo(OutputPluginBase):
 
     # Device pacing, as instance-overridable attributes (tests shorten them).
     RESET_AFTER_PUSHES = RESET_AFTER_PUSHES
-    FRAME_GAP_S = FRAME_GAP_S
-    LOADING_OVERLAY_S = LOADING_OVERLAY_S
+    ANIMATION_READY_S = ANIMATION_READY_S
     CONNECT_TIMEOUT_S = CONNECT_TIMEOUT_S
     READ_TIMEOUT_S = READ_TIMEOUT_S
 
     def __init__(self, board_id: str | None, config: dict[str, Any]) -> None:
         super().__init__(board_id, config)
         self.host = normalise_host(self.config.get("host"))
-        #: The PicID the next upload uses; ``None`` = the device's counter is
-        #: unknown (new instance, or an upload failed or was cut short).
+        #: The PicID the next upload uses; ``None`` = no session yet (new
+        #: instance, or an upload failed or was cut short): reset and re-seed.
         self._next_pic_id: int | None = None
         self._pushes_since_reset = 0
         brightness = self.config.get("brightness")
@@ -380,41 +389,45 @@ class DivoomPixoo(OutputPluginBase):
 
     def _wait(self, seconds: float, cancel: CancelToken) -> bool:
         """Pause; True when the run was cancelled meanwhile."""
-        if seconds > 0:
-            return cancel.wait(seconds)
-        return cancel.cancelled
+        return cancel.wait(seconds)
+
+    def _start_session(self, cancel: CancelToken) -> bool:
+        """Reset the device's id counter and seed ours from it (0 means 1).
+        False when the run was cancelled between the two requests."""
+        self._post({"Command": RESET_GIF_ID}, setup=True)
+        if cancel.cancelled:
+            return False
+        reply = self._post({"Command": GET_GIF_ID}, setup=True)
+        seed = reply.get("PicId")
+        self._next_pic_id = seed if isinstance(seed, int) and not isinstance(seed, bool) and seed > 0 else 1
+        self._pushes_since_reset = 0
+        return True
 
     def _upload(self, frames: list[bytes], speeds: list[int], cancel: CancelToken) -> bool | None:
-        """Upload *frames* as one GIF, frame *i* shown ``speeds[i]`` ms.
+        """Upload *frames* as one GIF, back-to-back, frame *i* shown ``speeds[i]`` ms.
 
-        Returns True when every frame landed, None when cancelled first, and
-        raises when the device failed. Either of the last two leaves the
-        device's PicID counter unknown, so the next upload resets.
+        Returns True when every frame was accepted, None when cancelled first,
+        and raises when the device failed. Either of the last two ends the
+        session, so the next upload resets and re-seeds.
         """
         count = len(frames)
-        posted = False
-
-        def gap() -> bool:
-            return self._wait(self.FRAME_GAP_S, cancel) if posted else cancel.cancelled
-
         try:
-            if (
-                self._next_pic_id is None
-                or count > 1
-                or self._pushes_since_reset + count > self.RESET_AFTER_PUSHES
-            ):
-                if cancel.cancelled:
+            if cancel.cancelled:
+                return None
+            if self._next_pic_id is None:
+                if not self._start_session(cancel):
                     return None
+            elif self._pushes_since_reset + count > self.RESET_AFTER_PUSHES:
                 self._next_pic_id = None
                 self._post({"Command": RESET_GIF_ID}, setup=True)
-                posted = True
                 self._next_pic_id, self._pushes_since_reset = 1, 0
             pic_id = self._next_pic_id
+            assert pic_id is not None
             for offset, (pixels, speed) in enumerate(zip(frames, speeds, strict=True)):
-                if gap():
+                if cancel.cancelled:
                     self._next_pic_id = None
                     return None
-                self._next_pic_id = None  # unknown until this frame lands
+                self._next_pic_id = None  # unknown until this frame is accepted
                 self._post(
                     {
                         "Command": SEND_GIF,
@@ -426,8 +439,8 @@ class DivoomPixoo(OutputPluginBase):
                         "PicData": base64.b64encode(pixels).decode("ascii"),
                     }
                 )
-                posted = True
                 self._pushes_since_reset += 1
+            # Never reuse or lower an id: the device would ignore it silently.
             self._next_pic_id = pic_id + 1
             return True
         except RequestCancelled:
@@ -469,16 +482,23 @@ class DivoomPixoo(OutputPluginBase):
         self._apply_brightness(cancel)
         return WriteResult(True, True)
 
-    def _animate(self, frames: list[bytes], speeds: list[int], target: bytes, cancel: CancelToken) -> WriteResult:
-        """Upload an animation as one GIF, let it play, then show *target* still."""
+    def _sequence(self, frames: list[bytes], speeds: list[int], target: bytes, cancel: CancelToken) -> WriteResult:
+        """The explicit sequence path: one looping GIF, then *target* still.
+
+        The device loops the GIF forever; once it is ready (~0.5 s after the
+        last frame) and has played through once, *target* replaces it. Expect
+        ~5 s in which the old loop keeps running with frame 0 replaced.
+        """
         if len(frames) < 2:
             return self._still(target, cancel)
+        if len(frames) > SEQUENCE_MAX_FRAMES:
+            last = len(frames) - 1
+            picks = sorted({round(i * last / (SEQUENCE_MAX_FRAMES - 1)) for i in range(SEQUENCE_MAX_FRAMES)})
+            frames, speeds = [frames[i] for i in picks], [speeds[i] for i in picks]
         failed = self._deliver(frames, speeds, cancel)
         if failed is not None:
             return failed
-        # The device loops an uploaded GIF; once it has shown (after its
-        # loading overlay) and played through, replace it with the still target.
-        if self._wait(self.LOADING_OVERLAY_S + sum(speeds) / 1000.0, cancel):
+        if self._wait(self.ANIMATION_READY_S + sum(speeds) / 1000.0, cancel):
             self._next_pic_id = None
             return WriteResult(True, False)
         return self._still(target, cancel)
@@ -499,30 +519,30 @@ class DivoomPixoo(OutputPluginBase):
         *,
         cancel: CancelToken,
     ) -> WriteResult:
-        """Play exactly the transition core resolved for the board, then rest on *after*."""
+        """Show *after*. For the Pixoo model core resolves ``none``: one still push.
+
+        An explicit transition spec (a caller overriding the model) is planned
+        with core's renderer and goes through the looping sequence path.
+        """
+        if transition.spec == "none":
+            return self._still(self.render(after), cancel)
         planned = plan_transition(self.layout(before), self.layout(after), transition.spec)
-        # Core fits the spec to the device (frame budget, minFrameMs), so the
-        # plan is sequenced: one frame per step of duration / (frames - 1).
-        step_ms = self._min_frame_ms()
+        step_ms = MIN_FRAME_MS
         if planned.frame_count and planned.frame_count > 1:
             step_ms = max(step_ms, round(planned.duration_ms / (planned.frame_count - 1)))
         # Frame 0 is *before*, which the device already shows.
-        frames = [f.pixels for f in transition_frames(planned, fps=1000 / max(1, step_ms))][1:]
-        return self._animate(frames, [step_ms] * len(frames), planned.to_frame.pixels, cancel)
+        frames = [f.pixels for f in transition_frames(planned, fps=1000 / step_ms)][1:]
+        return self._sequence(frames, [step_ms] * len(frames), planned.to_frame.pixels, cancel)
 
     def write_sequence(self, frames: list[TimedFrame], *, cancel: CancelToken) -> WriteResult:
-        """A transition plugin's frames, as given (core already fitted them to
-        ``maxFrames``), each shown at least the model's ``minFrameMs``."""
+        """Frames as one looping GIF (at most :data:`SEQUENCE_MAX_FRAMES`,
+        compressed evenly, first and last kept), each shown at least
+        :data:`MIN_FRAME_MS`, then the last frame as a still."""
         if not frames:
             return WriteResult(True, False)
-        floor = self._min_frame_ms()
         pixels = [self.render(f.frame) for f in frames]
-        speeds = [max(floor, int(f.duration_ms)) for f in frames]
-        return self._animate(pixels, speeds, pixels[-1], cancel)
-
-    def _min_frame_ms(self) -> int:
-        model = self.device_model or {}
-        return int((model.get("animation") or {}).get("minFrameMs") or 0)
+        speeds = [max(MIN_FRAME_MS, int(f.duration_ms)) for f in frames]
+        return self._sequence(pixels, speeds, pixels[-1], cancel)
 
     # --- finding the device ------------------------------------------------------------------
 
@@ -572,26 +592,60 @@ class DivoomPixoo(OutputPluginBase):
         return ActionOutcome(message=f"Found {len(found)} Pixoo(s) on {searched}.", devices=tuple(found))
 
     def action_cloud_lookup(self, inputs: dict[str, Any]) -> ActionOutcome:
-        """Opt-in: ask Divoom's cloud which Pixoos share this network's public address."""
+        """Opt-in: ask Divoom's cloud which Pixoos share this network's public address.
+
+        Reply (lab-verified): ``{"ReturnCode": 0, "ReturnMessage": "", "DeviceList":
+        [{"DeviceName", "DeviceId", "DevicePrivateIP", "DeviceMac", "Hardware"}]}``
+        for an empty request body. Only the local address, name and MAC are kept.
+        With a saved ``mac`` it re-finds that device (its address may have changed
+        under DHCP); a single device found fills in ``host`` and ``mac``.
+        """
         failed = "Divoom's servers did not return any Pixoo."
         try:
             response = self.http.post(DIVOOM_LAN_LOOKUP_URL, json={})
             body = response.json() if response.status_code == 200 else None
         except OutputHostBlocked:
-            return ActionOutcome(status="error", message="Not contacted: Divoom's servers are not allowed.", guidance=tuple(_fence_guidance()))
+            return ActionOutcome(
+                status="error", message="Not contacted: Divoom's servers are not allowed.", guidance=tuple(_fence_guidance())
+            )
         except (requests.RequestException, ValueError):
             return ActionOutcome(status="error", message="Could not reach Divoom's servers.")
         if not isinstance(body, dict) or body.get("ReturnCode") != 0:
             return ActionOutcome(status="error", message=failed)
-        devices = [
-            _device(str(d["DevicePrivateIP"]), 80, str(d.get("DeviceName") or "Pixoo"),
-                    f"{d.get('DeviceName') or 'Pixoo'} ({d['DevicePrivateIP']})")
-            for d in body.get("DeviceList") or []
-            if isinstance(d, dict) and d.get("DevicePrivateIP")
-        ]
+        devices = []
+        for entry in body.get("DeviceList") or []:
+            if not isinstance(entry, dict) or not entry.get("DevicePrivateIP"):
+                continue
+            ip, name = str(entry["DevicePrivateIP"]), str(entry.get("DeviceName") or "Pixoo")
+            devices.append({**_device(ip, 80, name, f"{name} ({ip})"), "mac": normalise_mac(entry.get("DeviceMac"))})
         if not devices:
             return ActionOutcome(status="warning", message=failed, devices=())
-        return ActionOutcome(message=f"Divoom's servers listed {len(devices)} Pixoo(s).", devices=tuple(devices))
+
+        saved = normalise_mac(self.config.get("mac"))
+        if saved is not None:
+            match = next((d for d in devices if d["mac"] == saved), None)
+            if match is None:
+                return ActionOutcome(
+                    status="warning",
+                    message="Divoom's servers did not list the Pixoo saved for this board; these are the ones they did.",
+                    devices=tuple(devices),
+                )
+            return ActionOutcome(
+                message=f"Found this board's Pixoo at {match['host']}.",
+                fields=self._fills(match),
+                devices=(match,),
+            )
+        fields = self._fills(devices[0]) if len(devices) == 1 else {}
+        return ActionOutcome(
+            message=f"Divoom's servers listed {len(devices)} Pixoo(s).", fields=fields, devices=tuple(devices)
+        )
+
+    @staticmethod
+    def _fills(found: dict[str, Any]) -> dict[str, ActionField]:
+        fields = {"host": ActionField(found["host"])}
+        if found.get("mac"):
+            fields["mac"] = ActionField(found["mac"])
+        return fields
 
     # --- probes -----------------------------------------------------------------------------
 

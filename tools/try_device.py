@@ -4,9 +4,9 @@
 never runs it. It does exactly two things, then stops:
 
 1. shows ``HELLO`` / ``FIESTA`` as a still frame (``write_cells``);
-2. waits (5 s by default), then plays ONE flip transition to ``FIESTA`` /
-   ``BOARD`` (``write_transition``, the transition FiestaBoard resolves for
-   the Pixoo model), including the still frame pushed after it.
+2. waits (5 s by default), then changes to ``FIESTA`` / ``BOARD`` through
+   ``write_transition`` with the transition FiestaBoard resolves for the
+   Pixoo model (``none`` since the 2026-10-04 lab: one more still push).
 
 It prints each HTTP request — the command, its PicID / PicNum / PicOffset,
 how long it took, the HTTP status and the device's reply (never the pixel
@@ -92,13 +92,13 @@ def build(plugin_cls: type, host: str) -> Any:
     return plugin
 
 
-def run(host: str, *, pause_s: float = 5.0, overlay_s: float | None = None, out=sys.stdout) -> dict[str, Any]:
+def run(host: str, *, pause_s: float = 5.0, ready_s: float | None = None, out=sys.stdout) -> dict[str, Any]:
     """The two operations against *host*; the report as a dict (also printed)."""
     from src.plugins import CancelToken, cells_from_codes, resolve_led_transition, text_to_board_array
 
     plugin = build(load_plugin_class(), host)
-    if overlay_s is not None:
-        plugin.LOADING_OVERLAY_S = overlay_s
+    if ready_s is not None:
+        plugin.ANIMATION_READY_S = ready_s
     started = time.monotonic()
     recorder = Recorder(started)
     plugin.http.use_transport(recorder)
@@ -118,7 +118,7 @@ def run(host: str, *, pause_s: float = 5.0, overlay_s: float | None = None, out=
     result = plugin.write_transition(first, second, transition, cancel=CancelToken())
     steps.append(
         {
-            "step": f"transition to FIESTA/BOARD ({transition.id}, write_transition)",
+            "step": f"change to FIESTA/BOARD (transition {transition.id}, write_transition)",
             "s": round(time.monotonic() - t, 3),
             "result": result._asdict(),
             "transition": {"id": transition.id, "source": transition.source, "reason": transition.reason},
@@ -132,8 +132,7 @@ def run(host: str, *, pause_s: float = 5.0, overlay_s: float | None = None, out=
         "calls": recorder.calls,
         "pic_ids": [c["PicID"] for c in recorder.calls if "PicID" in c],
         "constants": {
-            "FRAME_GAP_S": plugin.FRAME_GAP_S,
-            "LOADING_OVERLAY_S": plugin.LOADING_OVERLAY_S,
+            "ANIMATION_READY_S": plugin.ANIMATION_READY_S,
             "RESET_AFTER_PUSHES": plugin.RESET_AFTER_PUSHES,
         },
     }

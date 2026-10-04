@@ -67,7 +67,7 @@ def test_a_short_or_ragged_frame_is_padded_not_rejected():
     assert render_frame([[1]]) == expected_with_a(0, 0)
 
 
-def test_the_first_write_resets_the_gif_id_then_sends_one_frame_exactly(pixoo, make_plugin):
+def test_the_first_write_resets_seeds_the_gif_id_then_sends_one_frame_exactly(pixoo, make_plugin):
     plugin = make_plugin()
     frame = blank()
     frame[1][2] = 1
@@ -77,6 +77,7 @@ def test_the_first_write_resets_the_gif_id_then_sends_one_frame_exactly(pixoo, m
     assert (result.success, result.was_sent, result.partial) == (True, True, False)
     assert pixoo.commands == [
         {"Command": "Draw/ResetHttpGifId"},
+        {"Command": "Draw/GetHttpGifId"},
         {
             "Command": "Draw/SendHttpGif",
             "PicNum": 1,
