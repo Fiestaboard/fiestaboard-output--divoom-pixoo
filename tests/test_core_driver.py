@@ -39,3 +39,19 @@ def test_a_dead_device_is_a_failed_write_core_can_report(pixoo, make_plugin):
     result = driver.send_characters(frame(1), with_outcome=True)
     assert (result.success, result.was_sent) == (False, False)
     assert driver.last_write_error
+
+
+def test_core_renders_a_page_change_through_write_transition(pixoo, make_plugin):
+    now = [20_000.0]
+    driver = OutputPluginDriver(make_plugin(), clock=lambda: now[0])
+    assert driver.takes_transitions
+    driver.send_characters(frame(1))
+    now[0] += 2.0
+    pixoo.clear()
+
+    result = driver.render(frame(2), with_outcome=True)
+
+    assert (result.success, result.was_sent) == (True, True)
+    pushes = pixoo.pushes()
+    assert pushes[0]["PicNum"] > 1  # the board's resolved flip, as one GIF
+    assert pushes[-1]["PicNum"] == 1  # then the still target

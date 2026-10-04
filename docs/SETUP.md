@@ -64,11 +64,12 @@ stays on your network; no Divoom account or cloud service is involved.
 | `{63}`–`{68}` | Solid red, orange, yellow, green, blue or violet cells |
 | `{69}` | Solid white cell |
 | `{70}`, `{71}` | Unlit (black) cells |
-| Characters with no 3×5 glyph | Blank |
-| Per-character colour (`{red:HOT}`) and icons (`{icon:sun}`) | Not drawn yet: FiestaBoard does not send them to output plugins yet |
+| Colour spans (`{red:HOT}`) | Letters in that colour |
+| Icons (`{icon:sun}`) | The icon's 3×5 picture |
+| Characters with no 3×5 glyph | FiestaBoard's fallback for the `led_3x5` set |
 
-Page changes play FiestaBoard's flip transition (at most 32 frames, 80 ms each), then the new page
-stays on screen. FiestaBoard sends at most one update per second to the Pixoo.
+Page changes play the board's LED transition (by default FiestaBoard's flip: at most 32 frames,
+80 ms each, exactly as the preview shows it), then the new page stays on screen. FiestaBoard sends at most one update per second to the Pixoo.
 
 ## Configuration Reference
 

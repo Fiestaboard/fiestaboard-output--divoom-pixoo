@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import base64
 
-from plugins.divoom_pixoo import render_frame
-
+from src.markup import message_to_grid
 from src.outputs.plugin_base import CancelToken
+
+from .conftest import render as render_frame
 
 ROWS, COLS = 10, 16
 #: The 3x5 face on 64x64: 4 px per column (3 + 1 gap) from x=0, 6 px per row
@@ -86,3 +87,41 @@ def test_the_first_write_resets_the_gif_id_then_sends_one_frame_exactly(pixoo, m
             "PicData": base64.b64encode(expected_with_a(1, 2)).decode("ascii"),
         },
     ]
+
+
+def rich(message: str):
+    return message_to_grid(message, ROWS, COLS, extended_markup=True)
+
+
+def lit(pixels: bytes) -> dict[tuple[int, int], tuple[int, int, int]]:
+    return {
+        (i // 3 % 64, i // 3 // 64): tuple(pixels[i : i + 3])
+        for i in range(0, len(pixels), 3)
+        if pixels[i : i + 3] != b"\x00\x00\x00"
+    }
+
+
+def test_rich_cells_without_markup_render_like_their_codes():
+    assert render_frame(rich("A")) == expected_with_a(0, 0)
+
+
+def test_a_colour_span_draws_its_letters_in_that_colour():
+    pixels = lit(render_frame(rich("{red:A}")))
+    a = lit(expected_with_a(0, 0))
+    assert set(pixels) == set(a)
+    assert set(pixels.values()) == {RED}
+
+
+def test_an_icon_draws_lit_pixels_in_its_cell():
+    pixels = lit(render_frame(rich("{icon:sun}")))
+    assert pixels
+    assert all(0 <= x < CELL_W and ORIGIN_Y <= y < ORIGIN_Y + CELL_H for x, y in pixels)
+
+
+def test_write_cells_sends_the_rich_frame(pixoo, make_plugin):
+    plugin = make_plugin()
+    cells = rich("{red:A}")
+    result = plugin.write_cells(cells, native=None, cancel=CancelToken())
+    assert (result.success, result.was_sent) == (True, True)
+    assert pixoo.pushes()[-1]["PicData"] == base64.b64encode(render_frame(cells)).decode("ascii")
+    assert render_frame(cells) != expected_with_a(0, 0)

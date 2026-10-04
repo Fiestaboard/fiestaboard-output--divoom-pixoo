@@ -25,6 +25,11 @@ PLUGIN_DIR = Path(__file__).resolve().parent.parent
 MANIFEST, _ERRORS = load_manifest(PLUGIN_DIR / "manifest.json")
 
 
+def render(frame) -> bytes:
+    """A frame (0-71 codes or rich cells) as the RGB888 a bound plugin sends."""
+    return build({"host": "192.0.2.10"}).render(frame)
+
+
 @pytest.fixture
 def pixoo():
     device = MockPixoo().start()

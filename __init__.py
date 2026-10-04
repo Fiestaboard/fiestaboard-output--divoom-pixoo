@@ -2,31 +2,33 @@
 
 Drives one Pixoo 64 over its local HTTP API (``POST http://<host>/post``,
 one JSON command per request). Core owns the policy — the send floor
-(``min_interval_ms``, 1 s between writes and sequences), dedupe, preemption
-and the write budget — and this plugin moves pixels:
+(``min_interval_ms``, 1 s between writes), dedupe, preemption, the write
+budget and which LED transition a board runs — and this plugin moves pixels:
 
-- **Render.** Every frame is laid out with core's LED renderer
-  (:mod:`src.led`) in the model's 3x5 face — a 10-row x 16-column grid on
-  64x64 pixels — and rasterised to RGB888. Today core hands an output the
-  0-71 character grid; :func:`frame_tokens` is the one seam that turns a
-  frame into board tokens, and it already passes rich cells
-  (:class:`src.markup.BoardToken`) through untouched, so per-cell colour
-  and icons arrive without touching the write path.
-- **write** pushes one still frame: ``Draw/SendHttpGif`` with ``PicNum`` 1.
-- **write_sequence** runs FiestaBoard's LED flip (coarse: one frame per
-  step, no half-flaps, at most the model's 32 frames, at least 80 ms each)
-  from what the device shows to the target, uploads it as ONE multi-frame
-  GIF (same ``PicID``, ``PicOffset`` 0..n-1), then — once it has played —
-  pushes the target as a still, so the device never loops the animation.
+- **Render.** Frames are laid out with core's LED renderer (``src.led``,
+  through ``src.plugins``) for the board's device model and character set
+  (``self.device_model``, ``self.character_set``: 3x5 face, 10 x 16 cells
+  on 64 x 64) and rasterised to RGB888. A frame is 0-71 codes
+  (:meth:`write`) or rich cells (:meth:`write_cells`: colour spans, blocks,
+  icons); both go through :meth:`DivoomPixoo.render`.
+- **write / write_cells** push one still frame: ``Draw/SendHttpGif`` with
+  ``PicNum`` 1.
+- **write_transition** renders exactly the LED transition core resolved for
+  the board (``resolve_led_transition`` for its model: the flip FiestaUI
+  previews, already fitted to 32 frames of >= 80 ms), uploads it as ONE
+  multi-frame GIF (same ``PicID``, ``PicOffset`` 0..n-1), then — once it has
+  played — pushes the target as a still, so the device never loops it.
+- **write_sequence** uploads a transition plugin's frames the same way.
 - **PicID policy.** ``Draw/ResetHttpGifId`` before the first upload of an
   instance, before every animation, after any failed or cancelled upload,
   and once :data:`RESET_AFTER_PUSHES` frames went up since the last reset.
-  PicIDs count up from 1 after each reset.
 
-Every request is bounded by ``(connect, read)`` timeouts and checks the run's
-cancel token first; waits (pacing, the play-out) wait on the token. Device
-failures come back as a failed :class:`WriteResult`, never as an exception.
-Only the standard library, ``requests`` and FiestaBoard core are used.
+All device traffic goes through ``self.http`` (core's helper: the
+``FIESTABOARD_OUTPUTS_ALLOW_HOSTS`` fence, no redirects, the run's cancel
+token) with ``(connect, read)`` timeouts; the reset and brightness commands
+are marked ``setup=True``. Waits (pacing, the play-out) wait on the cancel
+token. Device failures come back as a failed :class:`WriteResult`, never as
+an exception.
 
 Several device facts below are community-reported and **unverified** on
 current firmware; each is a named constant, listed in the README's
@@ -36,42 +38,37 @@ current firmware; each is a named constant, listed in the README's
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import re
 from collections.abc import Sequence
-from functools import cache
-from pathlib import Path
 from typing import Any
 
 import requests
 
-from src.board_chars import characters_to_message
-from src.led import (
-    BUILTIN_CHARACTER_SETS,
-    LedLayout,
+from src.plugins import (
+    BoardToken,
+    CancelToken,
+    CellFrame,
+    ConnectionCheck,
     LedLayoutOptions,
+    OutputHostBlocked,
+    OutputPluginBase,
+    RequestCancelled,
+    ResolvedLedTransition,
+    RichCellFrame,
+    TimedFrame,
+    WriteResult,
+    cells_from_codes,
     layout_message,
     led_spec_for_model,
     plan_transition,
     rasterize,
-    resolve_led_transition,
     transition_frames,
-)
-from src.markup import BoardToken
-from src.output_allowlist import OutputHostBlocked, check_output_url
-from src.plugins import (
-    CancelToken,
-    CellFrame,
-    ConnectionCheck,
-    OutputPluginBase,
-    TimedFrame,
-    WriteResult,
 )
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["DivoomPixoo", "PixooError", "frame_tokens", "layout_frame", "render_frame"]
+__all__ = ["DivoomPixoo", "PixooError"]
 
 # --- device facts (each one: see README "Verify on your device") ----------------------------
 
@@ -92,7 +89,7 @@ FRAME_GAP_S = 0.15
 #: UNVERIFIED, including whether single-frame pushes show it too.
 LOADING_OVERLAY_S = 5.0
 
-#: ``requests`` timeouts, ``(connect, read)``, for one command.
+#: ``(connect, read)`` timeouts for one command.
 CONNECT_TIMEOUT_S = 3.0
 READ_TIMEOUT_S = 5.0
 
@@ -106,8 +103,6 @@ SEND_GIF = "Draw/SendHttpGif"
 RESET_GIF_ID = "Draw/ResetHttpGifId"
 GET_ALL_CONF = "Channel/GetAllConf"
 SET_BRIGHTNESS = "Channel/SetBrightness"
-
-_DEVICE_MODELS = Path(__file__).resolve().parent / "output" / "device-models.json"
 
 
 class PixooError(OSError):
@@ -126,61 +121,22 @@ class PixooBadResponse(PixooError):
     """A 200 whose body is not a Pixoo reply (not JSON, or ``error_code`` != 0)."""
 
 
-# --- rendering -------------------------------------------------------------------------------
+class _NoHost(requests.exceptions.InvalidURL):
+    """No device address is configured."""
 
-
-@cache
-def device_model() -> dict[str, Any]:
-    """The plugin's own ``divoom_pixoo64`` model (the file the manifest ``$ref`` s)."""
-    return json.loads(_DEVICE_MODELS.read_text(encoding="utf-8"))[0]
-
-
-@cache
-def _layout_options() -> LedLayoutOptions:
-    return LedLayoutOptions(charset=BUILTIN_CHARACTER_SETS[device_model()["charset"]])
-
-
-@cache
-def _code_token(code: int) -> BoardToken:
-    """The board token a 0-71 character code draws as."""
-    if 63 <= code <= 71:
-        return BoardToken("color", code=str(code))
-    text = characters_to_message([[code]]) if 0 <= code <= 62 else " "
-    return BoardToken("char", value=text if len(text) == 1 else " ")
-
-
-def frame_tokens(frame: Sequence[Sequence[Any]]) -> list[list[BoardToken]]:
-    """A frame as rows of board tokens: the seam between core's frame and the renderer.
-
-    A cell is a 0-71 character code (today's ``CellFrame``) or already a
-    rich :class:`BoardToken` (per-cell glyph, colour, background, icon),
-    which passes through as is.
-    """
-    return [[cell if isinstance(cell, BoardToken) else _code_token(int(cell)) for cell in row] for row in frame]
-
-
-def layout_frame(frame: Sequence[Sequence[Any]]) -> LedLayout:
-    """Lay *frame* out on the Pixoo's 64x64 matrix (3x5 face, 10x16 cells)."""
-    spec = led_spec_for_model(device_model())
-    assert spec is not None  # a pixels model
-    return layout_message(frame_tokens(frame), spec, _layout_options())
-
-
-def render_frame(frame: Sequence[Sequence[Any]]) -> bytes:
-    """*frame* as the device's RGB888 pixels, row-major from the top left."""
-    return rasterize(layout_frame(frame)).pixels
-
-
-# --- the plugin ------------------------------------------------------------------------------
 
 _SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
 
 
 def normalise_host(raw: Any) -> str:
     """``host`` or ``host:port``, lowercased, with any scheme or path dropped."""
-    text = str(raw or "").strip()
-    text = _SCHEME.sub("", text)
+    text = _SCHEME.sub("", str(raw or "").strip())
     return text.split("/", 1)[0].strip().lower()
+
+
+def _token(cell: Any) -> BoardToken:
+    """One cell as a board token: a rich cell as is, a 0-71 code projected."""
+    return cell if isinstance(cell, BoardToken) else cells_from_codes([[int(cell)]])[0][0]
 
 
 class DivoomPixoo(OutputPluginBase):
@@ -202,11 +158,10 @@ class DivoomPixoo(OutputPluginBase):
         #: unknown (new instance, or an upload failed or was cut short).
         self._next_pic_id: int | None = None
         self._pushes_since_reset = 0
-        #: What the device shows, as laid out (the flip starts from it).
-        self._shown: LedLayout | None = None
         brightness = self.config.get("brightness")
         self._brightness: int | None = None if brightness is None else max(0, min(100, int(brightness)))
         self._brightness_pending = self._brightness is not None
+        self._renderer: tuple[Any, LedLayoutOptions] | None = None
 
     # --- identity --------------------------------------------------------------------------
 
@@ -217,20 +172,41 @@ class DivoomPixoo(OutputPluginBase):
     def url(self) -> str:
         return f"http://{self.host}/post"
 
+    # --- rendering ---------------------------------------------------------------------------
+
+    def _render_setup(self) -> tuple[Any, LedLayoutOptions]:
+        """The board's matrix spec and layout options, from what core resolved."""
+        if self._renderer is None:
+            self._renderer = (
+                led_spec_for_model(self.device_model),
+                LedLayoutOptions(charset=self.character_set),
+            )
+        return self._renderer
+
+    def layout(self, frame: Sequence[Sequence[Any]]) -> Any:
+        """*frame* (0-71 codes or rich cells) laid out on the board's matrix."""
+        spec, options = self._render_setup()
+        return layout_message([[_token(cell) for cell in row] for row in frame], spec, options)
+
+    def render(self, frame: Sequence[Sequence[Any]]) -> bytes:
+        """*frame* as the device's RGB888 pixels, row-major from the top left."""
+        return rasterize(self.layout(frame)).pixels
+
     # --- the device seam ----------------------------------------------------------------------
 
-    def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Send one command; the device's JSON reply, or raise.
+    def _post(self, payload: dict[str, Any], *, setup: bool = False) -> dict[str, Any]:
+        """Send one command through ``self.http``; the device's JSON reply, or raise.
 
         Raises:
-            OutputHostBlocked: the host is outside FIESTABOARD_OUTPUTS_ALLOW_HOSTS.
-            requests.RequestException: no answer (unreachable, timed out).
+            requests.RequestException: no answer, a fenced host
+                (``OutputHostBlocked``), or a cancelled run (``RequestCancelled``).
             PixooStatusError / PixooBadResponse: an answer that is not success.
         """
         if not self.host:
-            raise requests.exceptions.InvalidURL("No device address configured")
-        check_output_url(self.url)
-        response = requests.post(self.url, json=payload, timeout=(self.CONNECT_TIMEOUT_S, self.READ_TIMEOUT_S))
+            raise _NoHost("No device address configured")
+        response = self.http.post(
+            self.url, json=payload, setup=setup, timeout=(self.CONNECT_TIMEOUT_S, self.READ_TIMEOUT_S)
+        )
         if response.status_code != 200:
             raise PixooStatusError(response.status_code)
         try:
@@ -251,8 +227,8 @@ class DivoomPixoo(OutputPluginBase):
             return cancel.wait(seconds)
         return cancel.cancelled
 
-    def _upload(self, frames: list[bytes], speed_ms: int, cancel: CancelToken) -> bool | None:
-        """Upload *frames* as one GIF.
+    def _upload(self, frames: list[bytes], speeds: list[int], cancel: CancelToken) -> bool | None:
+        """Upload *frames* as one GIF, frame *i* shown ``speeds[i]`` ms.
 
         Returns True when every frame landed, None when cancelled first, and
         raises when the device failed. Either of the last two leaves the
@@ -273,11 +249,11 @@ class DivoomPixoo(OutputPluginBase):
                 if cancel.cancelled:
                     return None
                 self._next_pic_id = None
-                self._post({"Command": RESET_GIF_ID})
+                self._post({"Command": RESET_GIF_ID}, setup=True)
                 posted = True
                 self._next_pic_id, self._pushes_since_reset = 1, 0
             pic_id = self._next_pic_id
-            for offset, pixels in enumerate(frames):
+            for offset, (pixels, speed) in enumerate(zip(frames, speeds, strict=True)):
                 if gap():
                     self._next_pic_id = None
                     return None
@@ -289,7 +265,7 @@ class DivoomPixoo(OutputPluginBase):
                         "PicWidth": PIC_WIDTH,
                         "PicOffset": offset,
                         "PicID": pic_id,
-                        "PicSpeed": speed_ms,
+                        "PicSpeed": speed,
                         "PicData": base64.b64encode(pixels).decode("ascii"),
                     }
                 )
@@ -297,6 +273,10 @@ class DivoomPixoo(OutputPluginBase):
                 self._pushes_since_reset += 1
             self._next_pic_id = pic_id + 1
             return True
+        except RequestCancelled:
+            # Core's cancel scope refused the request: preempted, not failed.
+            self._next_pic_id = None
+            return None
         except Exception:
             self._next_pic_id = None
             raise
@@ -307,16 +287,16 @@ class DivoomPixoo(OutputPluginBase):
         if not self._brightness_pending or cancel.cancelled:
             return
         try:
-            self._post({"Command": SET_BRIGHTNESS, "Brightness": self._brightness})
+            self._post({"Command": SET_BRIGHTNESS, "Brightness": self._brightness}, setup=True)
         except Exception as exc:
             logger.warning("Pixoo %s: setting brightness failed: %s", self.host, exc)
             return
         self._brightness_pending = False
 
-    def _deliver(self, frames: list[bytes], speed_ms: int, cancel: CancelToken) -> WriteResult | None:
+    def _deliver(self, frames: list[bytes], speeds: list[int], cancel: CancelToken) -> WriteResult | None:
         """One upload as a write verdict; ``None`` when it landed."""
         try:
-            landed = self._upload(frames, speed_ms, cancel)
+            landed = self._upload(frames, speeds, cancel)
         except Exception as exc:
             logger.warning("Pixoo %s: upload failed: %s", self.host or "(no address)", exc)
             return WriteResult(False, False)
@@ -325,42 +305,67 @@ class DivoomPixoo(OutputPluginBase):
             return WriteResult(True, False)
         return None
 
-    def write(self, frame: CellFrame, *, native: Any, cancel: CancelToken) -> WriteResult:
-        layout = layout_frame(frame)
-        failed = self._deliver([rasterize(layout).pixels], STILL_SPEED_MS, cancel)
+    def _still(self, pixels: bytes, cancel: CancelToken) -> WriteResult:
+        failed = self._deliver([pixels], [STILL_SPEED_MS], cancel)
         if failed is not None:
             return failed
-        self._shown = layout
         self._apply_brightness(cancel)
         return WriteResult(True, True)
 
-    def write_sequence(self, frames: list[TimedFrame], *, cancel: CancelToken) -> WriteResult:
-        if not frames:
-            return WriteResult(True, False)
-        model = device_model()
-        target = layout_frame(frames[-1].frame)
-        before = self._shown if self._shown is not None else layout_frame(frames[0].frame)
-        # The model's default: the coarse flip (one frame per step, no
-        # half-flaps, compressed to maxFrames, each step >= minFrameMs).
-        spec = resolve_led_transition(None, model).spec
-        transition = plan_transition(before, target, spec)
-        pixels = [f.pixels for f in transition_frames(transition)]
-        if self._shown is not None and len(pixels) > 1:
-            pixels = pixels[1:]  # frame 0 is already on the device
-        if len(pixels) <= 1:
-            # Nothing changes (or nothing left to animate): one still frame.
-            return self.write(frames[-1].frame, native=None, cancel=cancel)
-
-        step_ms = int(spec.step_ms)
-        failed = self._deliver(pixels, step_ms, cancel)
+    def _animate(self, frames: list[bytes], speeds: list[int], target: bytes, cancel: CancelToken) -> WriteResult:
+        """Upload an animation as one GIF, let it play, then show *target* still."""
+        if len(frames) < 2:
+            return self._still(target, cancel)
+        failed = self._deliver(frames, speeds, cancel)
         if failed is not None:
             return failed
         # The device loops an uploaded GIF; once it has shown (after its
         # loading overlay) and played through, replace it with the still target.
-        if self._wait(self.LOADING_OVERLAY_S + len(pixels) * step_ms / 1000.0, cancel):
+        if self._wait(self.LOADING_OVERLAY_S + sum(speeds) / 1000.0, cancel):
             self._next_pic_id = None
             return WriteResult(True, False)
-        return self.write(frames[-1].frame, native=None, cancel=cancel)
+        return self._still(target, cancel)
+
+    # --- writes --------------------------------------------------------------------------------
+
+    def write(self, frame: CellFrame, *, native: Any, cancel: CancelToken) -> WriteResult:
+        return self._still(self.render(frame), cancel)
+
+    def write_cells(self, cells: RichCellFrame, *, native: Any, cancel: CancelToken) -> WriteResult:
+        return self._still(self.render(cells), cancel)
+
+    def write_transition(
+        self,
+        before: RichCellFrame,
+        after: RichCellFrame,
+        transition: ResolvedLedTransition,
+        *,
+        cancel: CancelToken,
+    ) -> WriteResult:
+        """Play exactly the transition core resolved for the board, then rest on *after*."""
+        planned = plan_transition(self.layout(before), self.layout(after), transition.spec)
+        # Core fits the spec to the device (frame budget, minFrameMs), so the
+        # plan is sequenced: one frame per step of duration / (frames - 1).
+        step_ms = self._min_frame_ms()
+        if planned.frame_count and planned.frame_count > 1:
+            step_ms = max(step_ms, round(planned.duration_ms / (planned.frame_count - 1)))
+        # Frame 0 is *before*, which the device already shows.
+        frames = [f.pixels for f in transition_frames(planned, fps=1000 / max(1, step_ms))][1:]
+        return self._animate(frames, [step_ms] * len(frames), planned.to_frame.pixels, cancel)
+
+    def write_sequence(self, frames: list[TimedFrame], *, cancel: CancelToken) -> WriteResult:
+        """A transition plugin's frames, as given (core already fitted them to
+        ``maxFrames``), each shown at least the model's ``minFrameMs``."""
+        if not frames:
+            return WriteResult(True, False)
+        floor = self._min_frame_ms()
+        pixels = [self.render(f.frame) for f in frames]
+        speeds = [max(floor, int(f.duration_ms)) for f in frames]
+        return self._animate(pixels, speeds, pixels[-1], cancel)
+
+    def _min_frame_ms(self) -> int:
+        model = self.device_model or {}
+        return int((model.get("animation") or {}).get("minFrameMs") or 0)
 
     # --- probes -----------------------------------------------------------------------------
 
@@ -370,7 +375,7 @@ class DivoomPixoo(OutputPluginBase):
             body = self._post({"Command": GET_ALL_CONF})
         except OutputHostBlocked:
             return ConnectionCheck.blocked(self.host)
-        except requests.exceptions.InvalidURL:
+        except _NoHost:
             return self._failed("unreachable", "No device address is set.", "No address", "Enter the Pixoo's IP address.")
         except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as exc:
             return self._failed(

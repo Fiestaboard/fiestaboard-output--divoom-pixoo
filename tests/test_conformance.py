@@ -1,7 +1,7 @@
 """FiestaBoard core's output-plugin conformance suite, run against this plugin.
 
-The suite plays core and device both: the factory routes the plugin's one
-device seam (``_post``) to the suite's fake transport. ``decode`` turns a
+The suite plays core and device both: it routes the plugin's device helper
+(``self.http``) to its fake transport, so the plugin's real request code runs. ``decode`` turns a
 ``Draw/SendHttpGif`` payload back into the grid it shows, by matching its
 RGB against every uniform grid the suite writes, so the suite can check
 that a sequence upload ends on its target frame.
@@ -15,11 +15,12 @@ from __future__ import annotations
 import base64
 from functools import cache
 
-from plugins.divoom_pixoo import DivoomPixoo, render_frame
+from plugins.divoom_pixoo import DivoomPixoo
 
 from src.outputs.conformance import OutputConformanceSuite
 
 from .conftest import PLUGIN_DIR
+from .conftest import render as render_frame
 
 ROWS, COLS = 10, 16
 
@@ -41,9 +42,8 @@ def decode(payload):
 
 
 def make_plugin(board_id, config, transport):
-    plugin = DivoomPixoo(board_id, config)
-    plugin._post = transport.send
-    return plugin
+    # The suite routes self.http to its fake device itself.
+    return DivoomPixoo(board_id, config)
 
 
 def test_the_plugin_is_conformant():
@@ -53,5 +53,5 @@ def test_the_plugin_is_conformant():
         config={"host": "192.0.2.10", "brightness": 50},
         decode=decode,
     ).assert_conformant()
-    # Every rule ran except the ones that cannot apply to this plugin.
+    # Every rule ran (device_traffic included) except the secret check.
     assert all(s.startswith("device_key: no secret") for s in report.skipped), report.skipped

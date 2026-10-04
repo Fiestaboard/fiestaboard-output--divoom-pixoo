@@ -40,7 +40,9 @@ FiestaBoard lays out each page on the 10 × 16 grid and the plugin draws it:
 - Letters, digits and punctuation in the 3×5 font, in white on black
 - Colour tiles `{63}`–`{68}` (red through violet) as solid cells in the board colours, `{69}` as
   a white cell, and `{70}`/`{71}` (black) as unlit cells
-- Characters the 3×5 font has no glyph for as blanks
+- Colour spans (`{red:HOT}`) as letters in that colour, block spans as lit backgrounds, and icons
+  (`{icon:sun}`) as their 3×5 pictures
+- Characters the 3×5 font has no glyph for as FiestaBoard's fallback for the `led_3x5` set
 
 For example, this page:
 
@@ -52,9 +54,8 @@ SUNNY 72
 shows two red cells, `WEATHER` and two more red cells on the first row, and `SUNNY 72` on the
 second.
 
-Today FiestaBoard hands output plugins the 0–71 character grid, so per-character colour
-(`{red:HOT}`) and icons (`{icon:sun}`) are not drawn yet. The plugin's renderer already accepts
-rich cells; it will draw them once FiestaBoard sends them.
+FiestaBoard sends the Pixoo rich cells (each cell's glyph, colour and background, already fitted
+to the `led_3x5` character set), so colours and icons in a page reach the screen.
 
 ## Configuration
 
@@ -78,16 +79,21 @@ No setting is secret: the Pixoo's local API has no authentication.
 
 ## How it works
 
-**One still frame** (`write`): the page is rendered to 64 × 64 RGB888 and sent as
+**One still frame** (`write` / `write_cells`): the page is rendered to 64 × 64 RGB888 and sent as
 `Draw/SendHttpGif` with `PicNum` 1, `PicWidth` 64, `PicOffset` 0, the next `PicID` and the
 pixels base64-encoded in `PicData`.
 
-**A page change with a transition** (`write_sequence`): FiestaBoard's LED flip runs from what the
-device shows to the new page, coarse (one frame per 80 ms step, no half-flaps) and compressed to at
-most 32 frames, ending exactly on the new page. The frames go up as **one** GIF: one POST per frame,
-all with the same `PicID`, `PicNum` = frame count and `PicOffset` 0, 1, 2… The device loops an
-uploaded GIF, so once it has loaded and played through, the plugin pushes the new page as a still
-frame.
+**A page change** (`write_transition`): FiestaBoard resolves the board's LED transition for the
+Pixoo model (by default the flip: one frame per 80 ms step, no half-flaps, at most 32 frames) and
+hands the plugin the before and after pages. The plugin plans exactly that transition with core's
+LED renderer, the same frames FiestaUI previews, and uploads them as **one** GIF: one POST per
+frame, all with the same `PicID`, `PicNum` = frame count and `PicOffset` 0, 1, 2… The first
+frame (the page already on screen) is not re-sent. The device loops an uploaded GIF, so once it
+has loaded and played through, the plugin pushes the new page as a still frame.
+
+**Transition plugins** (`write_sequence`): when a board uses one of FiestaBoard's transition
+plugins instead, its frames are uploaded the same way, each shown for its own duration but never
+less than 80 ms.
 
 **`PicID` and resets.** The plugin sends `Draw/ResetHttpGifId` and restarts `PicID` at 1:
 
@@ -96,14 +102,18 @@ frame.
 - after an upload that failed or was cut short (the device's counter is then unknown);
 - when the next upload would take it past 32 frame pushes since the last reset.
 
-**Timeouts and cancelling.** Each request has a 3 s connect and 5 s read timeout. The plugin
+**Timeouts and cancelling.** Every request goes through FiestaBoard's device helper
+(`self.http`), which enforces `FIESTABOARD_OUTPUTS_ALLOW_HOSTS`, follows no redirects and refuses
+requests once a write is cancelled; the reset and brightness commands are marked as setup
+requests. Each request has a 3 s connect and 5 s read timeout. The plugin
 checks whether a newer page has arrived before every request and while it waits between frames,
 and stops there. A device error is reported as a failed write, never raised; three failed writes in
 a row make FiestaBoard pause this device for a few minutes.
 
-**Rendering.** All drawing goes through FiestaBoard core's `src/led` package (the same renderer
-FiestaUI previews use). The single entry point is `frame_tokens()` in `__init__.py`: it turns a
-frame into board tokens, mapping today's 0–71 codes and passing rich cells straight through.
+**Rendering.** All drawing goes through FiestaBoard core's LED renderer (`src.led`, imported
+via `src.plugins`, the same renderer FiestaUI previews use), for the device model and character
+set FiestaBoard resolved for the board (`self.device_model`, `self.character_set`). The one entry
+point is `DivoomPixoo.render()`: it takes 0–71 codes or rich cells.
 
 ## Verify on your device
 
