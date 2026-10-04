@@ -2,5 +2,5 @@
 source = .
 omit =
     tests/*
-    plugins/*
+    .test-scaffold/*
     fiestaboard-core/*

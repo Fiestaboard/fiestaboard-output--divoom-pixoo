@@ -6,8 +6,8 @@ __pycache__/
 htmlcov/
 .pytest_cache/
 
-# Local CI import scaffold (recreated by ci.yml and by run_tests.sh)
-/plugins/
+# Local test import scaffold (recreated by run_tests.sh and CI)
+/.test-scaffold/
 /fiestaboard-core/
 
 # OS / editor
