@@ -41,6 +41,22 @@ def test_the_device_data_is_byte_identical_to_the_fiestaui_model():
     assert digest == DEVICE_MODELS_SHA256
 
 
+def test_the_address_field_is_a_device_picker_bound_to_find_my_pixoo():
+    host = MANIFEST.output.settings_schema["properties"]["host"]
+    assert host["ui:widget"] == "device-picker"
+    assert host["ui:options"] == {"action": "find_pixoo", "value_key": "host", "label_key": "label"}
+
+
+def test_the_actions_are_find_my_pixoo_cloud_lookup_and_test():
+    actions = {a.id: a for a in MANIFEST.output.actions}
+    assert list(actions) == ["find_pixoo", "cloud_lookup", "test_connection"]
+    assert actions["find_pixoo"].label == "Find my Pixoo"
+    assert set(actions["find_pixoo"].input_schema["properties"]) == {"subnet", "hint_host"}
+    assert not actions["find_pixoo"].input_schema.get("required")
+    assert actions["cloud_lookup"].label == "Ask Divoom's servers which Pixoos are on your network"
+    assert actions["cloud_lookup"].input_schema is None
+
+
 def test_package_json_carries_the_manifest_version():
     package = json.loads((PLUGIN_DIR / "package.json").read_text())
     manifest = json.loads((PLUGIN_DIR / "manifest.json").read_text())

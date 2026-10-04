@@ -9,6 +9,8 @@ misbehave on purpose:
 - ``"garbage"`` answers 200 with a body that is not JSON;
 - ``"error_code"`` answers 200 with ``{"error_code": 1}``;
 - ``"json_list"`` answers 200 with JSON that is not an object;
+- ``"other_json"`` answers 200 ``{"error_code": 0}`` without the Pixoo's config keys
+  (another device on the LAN that happens to speak JSON);
 - ``"hang"`` accepts the request and never answers (until :meth:`stop`);
 - ``freeze_after = N`` reproduces the community-reported freeze: after N
   ``Draw/SendHttpGif`` pushes with no ``Draw/ResetHttpGifId`` in between,
@@ -137,6 +139,8 @@ class MockPixoo:
             return 200, b"<html>not the pixoo</html>"
         if self.mode == "json_list":
             return 200, [0]
+        if self.mode == "other_json":
+            return 200, {"error_code": 0, "status": "some other device"}
         if self.mode == "error_code":
             return 200, {"error_code": 1}
         name = command.get("Command")

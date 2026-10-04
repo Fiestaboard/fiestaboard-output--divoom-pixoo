@@ -66,9 +66,37 @@ to the `led_3x5` character set), so colours and icons in a page reach the screen
 
 No setting is secret: the Pixoo's local API has no authentication.
 
+## Finding your Pixoo
+
+**Find my Pixoo** (the search button next to the address field) looks for a Pixoo 64 on your
+local network. It asks every address of a /24 network for the Pixoo's configuration
+(`POST /post` `Channel/GetAllConf` on port 80), at most 64 at a time with 0.8 s per address and
+10 s in all, and lists what answers like a Pixoo. Nothing outside your network is contacted.
+
+It searches, in order:
+
+1. a network you type, for example `192.168.1.0/24` (a /22 at most, private addresses only);
+2. the network of the address you opened FiestaBoard at, when the settings screen passes it;
+3. the network FiestaBoard itself is on. In Docker's default bridge mode that is a container
+   network, so the first two matter.
+
+If nothing is found, type the address yourself: it is in the Divoom app under the device's
+settings, or in your router's list of connected devices.
+
+**Ask Divoom's servers which Pixoos are on your network** is a separate, opt-in button. It sends
+one request to Divoom's cloud (`app.divoom-gz.com`). Divoom sees your public IP address and
+answers with the Pixoos registered from it; the plugin keeps only each one's local address and
+name. It runs only when you click it.
+
+Both go through FiestaBoard's device helper, so `FIESTABOARD_OUTPUTS_ALLOW_HOSTS` applies. It is
+unset in production. Development setups set it to their mocks, which blocks a sweep: set it
+empty (or add your Pixoo's address) to search a real network.
+
 ## Features
 
 - Sends FiestaBoard pages to a Pixoo 64 on your local network, with no cloud service
+- **Find my Pixoo**: searches your network for the device; manual entry always works
+- Optional, clearly labelled lookup through Divoom's cloud when the search finds nothing
 - FiestaBoard's flip transition, uploaded as one animation within the device's 32-frame budget
 - Always lands on the new page: after the animation plays, the target is pushed as a still frame
 - Guards against the reported upload freeze by resetting the device's GIF counter regularly
@@ -186,6 +214,14 @@ Tests run against a FiestaBoard core checkout that has the output-plugin API:
 They use a mock Pixoo on 127.0.0.1 (`tests/mock_pixoo.py`) that records every command and can
 fail, hang or freeze on purpose; a network fence refuses any other host. The suite includes
 FiestaBoard's output-plugin conformance suite (`tests/test_conformance.py`) and needs 80% coverage.
+
+`tools/try_device.py` is a local, development-only check against a real Pixoo: it shows one
+still frame, then plays one transition, and prints the timing and reply of every request. It
+never loops. Pass the device address on the command line only:
+
+```bash
+PYTHONPATH=/path/to/FiestaBoard python3 tools/try_device.py --host 192.168.1.50
+```
 
 ## Author
 

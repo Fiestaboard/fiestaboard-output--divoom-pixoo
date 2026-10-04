@@ -13,9 +13,10 @@ stays on your network; no Divoom account or cloud service is involved.
 - A **Divoom Pixoo 64** set up with the Divoom app and connected to your Wi-Fi. The smaller Pixoo
   16 and Pixoo 32 are not supported: they cannot fit FiestaBoard's minimum 3 × 15 grid.
 - **FiestaBoard 10.0.0 or later**, on the same network as the Pixoo.
-- The Pixoo's **IP address**. In the Divoom app, open the device and look under its device
-  settings, or find it in your router's list of connected devices. A fixed (reserved) address in
-  your router stops it from changing.
+- The Pixoo's **IP address**. **Find my Pixoo** in the board settings searches your network for
+  it. If that finds nothing, look in the Divoom app under the device's settings, or in your
+  router's list of connected devices. A fixed (reserved) address in your router stops it from
+  changing.
 
 > Output plugins are a beta feature, and this plugin has not yet been verified on a real device.
 > See [Verify on your device](../README.md#verify-on-your-device) for what is still to be
@@ -32,8 +33,9 @@ stays on your network; no Divoom account or cloud service is involved.
      -d '{"repository": "https://github.com/Fiestaboard/fiestaboard-output--divoom-pixoo"}'
    ```
 
-2. **Configure** — Create a board driven by the Pixoo, with its IP address as `host`. The address
-   below is an example; use your Pixoo's. `brightness` is optional.
+2. **Configure** — Create a board driven by the Pixoo, with its IP address as `host`. In the
+   board settings, **Find my Pixoo** fills it in; you can always type it instead. Through the
+   API, the address below is an example; use your Pixoo's. `brightness` is optional.
 
    ```bash
    curl -X POST http://localhost:4420/api/outputs/divoom_pixoo/boards \
@@ -88,6 +90,17 @@ The plugin itself needs no environment variables, API keys or passwords: the Pix
 no authentication.
 
 ## Troubleshooting
+
+**Find my Pixoo finds nothing**
+
+- Make sure the Pixoo is on and on the same network as the device you opened FiestaBoard on.
+- Enter your network, for example `192.168.1.0/24`, and search again. FiestaBoard in Docker
+  sees a container network of its own, so it cannot always tell which network to search.
+- If `FIESTABOARD_OUTPUTS_ALLOW_HOSTS` is set (development setups set it), only the hosts it
+  lists are asked: set it empty to search.
+- **Ask Divoom's servers which Pixoos are on your network** is the opt-in fallback. It sends
+  one request to Divoom's cloud, which sees your public IP address.
+- Or type the address from the Divoom app or your router.
 
 **The connection test says it could not connect**
 

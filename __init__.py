@@ -38,20 +38,27 @@ current firmware; each is a named constant, listed in the README's
 from __future__ import annotations
 
 import base64
+import ipaddress
 import logging
+import os
 import re
+import socket
+import time
 from collections.abc import Sequence
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from typing import Any
 
 import requests
 
 from src.plugins import (
+    ActionOutcome,
     BoardToken,
     CancelToken,
     CellFrame,
     ConnectionCheck,
     LedLayoutOptions,
     OutputHostBlocked,
+    OutputHttp,
     OutputPluginBase,
     RequestCancelled,
     ResolvedLedTransition,
@@ -61,6 +68,7 @@ from src.plugins import (
     cells_from_codes,
     layout_message,
     led_spec_for_model,
+    local_ipv4,
     plan_transition,
     rasterize,
     transition_frames,
@@ -68,7 +76,7 @@ from src.plugins import (
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["DivoomPixoo", "PixooError"]
+__all__ = ["DivoomPixoo", "PixooError", "candidate_subnets", "is_pixoo_reply", "sweep"]
 
 # --- device facts (each one: see README "Verify on your device") ----------------------------
 
@@ -132,6 +140,155 @@ def normalise_host(raw: Any) -> str:
     """``host`` or ``host:port``, lowercased, with any scheme or path dropped."""
     text = _SCHEME.sub("", str(raw or "").strip())
     return text.split("/", 1)[0].strip().lower()
+
+
+# --- finding a Pixoo -------------------------------------------------------------------------
+
+#: Port, per-host timeout, total budget and concurrency of a LAN sweep.
+DISCOVERY_PORT = 80
+DISCOVERY_PER_HOST_S = 0.8
+DISCOVERY_TOTAL_S = 10.0
+DISCOVERY_CONCURRENCY = 64
+#: The largest network a sweep accepts (a /22 is 1022 hosts).
+DISCOVERY_MAX_PREFIX = 22
+#: Divoom's LAN-lookup endpoint (opt-in: the request goes to Divoom's cloud).
+DIVOOM_LAN_LOOKUP_URL = "https://app.divoom-gz.com/Device/ReturnSameLANDevice"
+#: Keys of the Pixoo's Channel/GetAllConf reply; any one marks the device.
+_PIXOO_KEYS = frozenset({"Brightness", "LightSwitch", "RotationFlag", "CurClockId"})
+_ALLOW_ENV = "FIESTABOARD_OUTPUTS_ALLOW_HOSTS"
+
+
+def is_pixoo_reply(body: Any) -> bool:
+    """Whether *body* is a Pixoo's ``Channel/GetAllConf`` answer."""
+    return isinstance(body, dict) and body.get("error_code") == 0 and bool(_PIXOO_KEYS & body.keys())
+
+
+def _resolve_ipv4(name: str) -> str | None:
+    try:
+        return socket.gethostbyname(name)
+    except (OSError, UnicodeError):
+        return None
+
+
+def _lan_address(value: str | None) -> ipaddress.IPv4Address | None:
+    """*value* (an address or hostname) as a private, non-loopback LAN IPv4."""
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        address = ipaddress.ip_address(text)
+    except ValueError:
+        resolved = _resolve_ipv4(text)
+        if resolved is None:
+            return None
+        address = ipaddress.ip_address(resolved)
+    if not isinstance(address, ipaddress.IPv4Address):
+        return None
+    if not address.is_private or address.is_loopback or address.is_link_local:
+        return None
+    return address
+
+
+def candidate_subnets(
+    *, subnet: str | None = None, hint_host: str | None = None, local_ip: str | None = None
+) -> list[ipaddress.IPv4Network]:
+    """The networks a sweep searches, in order: the one asked for, the /24 of
+    the browser's address (*hint_host*: in Docker bridge mode FiestaBoard's
+    own address is a container network), then FiestaBoard's own /24.
+
+    Raises:
+        ValueError: *subnet* is malformed, not private, or larger than a /22.
+    """
+    found: list[ipaddress.IPv4Network] = []
+    if subnet:
+        network = ipaddress.IPv4Network(subnet.strip(), strict=False)
+        if not network.is_private:
+            raise ValueError(f"{network} is not a private network")
+        if network.prefixlen < DISCOVERY_MAX_PREFIX:
+            raise ValueError(f"{network} is too large to search; use a /{DISCOVERY_MAX_PREFIX} or smaller")
+        found.append(network)
+    for value in (hint_host, local_ip):
+        address = _lan_address(value)
+        if address is None:
+            continue
+        network = ipaddress.IPv4Network(f"{address}/24", strict=False)
+        if not any(network.subnet_of(n) for n in found):
+            found.append(network)
+    return found
+
+
+def _device(ip: str, port: int, name: str = "Pixoo 64", label: str | None = None) -> dict[str, Any]:
+    return {
+        "ip": ip,
+        "port": port,
+        "host": ip if port == 80 else f"{ip}:{port}",
+        "label": label or f"{name} at {ip}",
+        "hostname": name,
+    }
+
+
+def _probe(http: OutputHttp, ip: str, port: int, per_host_s: float) -> bool:
+    try:
+        response = http.post(
+            f"http://{ip}:{port}/post", json={"Command": "Channel/GetAllConf"}, timeout=(per_host_s, per_host_s)
+        )
+        return response.status_code == 200 and is_pixoo_reply(response.json())
+    except Exception:  # unreachable, fenced, not JSON: not a Pixoo
+        return False
+
+
+def sweep(
+    http: OutputHttp,
+    targets: list[tuple[str, int]],
+    *,
+    per_host_s: float = DISCOVERY_PER_HOST_S,
+    total_s: float = DISCOVERY_TOTAL_S,
+    concurrency: int = DISCOVERY_CONCURRENCY,
+) -> list[dict[str, Any]]:
+    """Ask every ``(ip, port)`` in *targets* for its config, at most
+    *concurrency* at once; the Pixoos that answered by *total_s*, in target order.
+
+    Goes through *http*, so ``FIESTABOARD_OUTPUTS_ALLOW_HOSTS`` applies: with
+    it set, only listed hosts are asked.
+    """
+    deadline = time.monotonic() + total_s
+    pool = ThreadPoolExecutor(max_workers=max(1, concurrency), thread_name_prefix="pixoo-sweep")
+    futures = {pool.submit(_probe, http, ip, port, per_host_s): i for i, (ip, port) in enumerate(targets)}
+    hits: dict[int, dict[str, Any]] = {}
+    pending = set(futures)
+    while pending:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        done, pending = wait(pending, timeout=remaining, return_when=FIRST_COMPLETED)
+        for future in done:
+            if future.result():
+                index = futures[future]
+                hits[index] = _device(*targets[index])
+    # Probes still on the wire end within their own timeout; nobody waits.
+    pool.shutdown(wait=False, cancel_futures=True)
+    return [hits[i] for i in sorted(hits)]
+
+
+def _targets(networks: list[ipaddress.IPv4Network], port: int) -> list[tuple[str, int]]:
+    seen: set[str] = set()
+    out = []
+    for network in networks:
+        for address in network.hosts():
+            ip = str(address)
+            if ip not in seen:
+                seen.add(ip)
+                out.append((ip, port))
+    return out
+
+
+def _fence_guidance() -> list[str]:
+    if os.environ.get(_ALLOW_ENV, "").strip():
+        return [
+            f"{_ALLOW_ENV} is set, so only the hosts it lists are contacted. "
+            "Development setups set it; unset it (or set it empty) to search your network."
+        ]
+    return []
 
 
 def _token(cell: Any) -> BoardToken:
@@ -366,6 +523,75 @@ class DivoomPixoo(OutputPluginBase):
     def _min_frame_ms(self) -> int:
         model = self.device_model or {}
         return int((model.get("animation") or {}).get("minFrameMs") or 0)
+
+    # --- finding the device ------------------------------------------------------------------
+
+    DISCOVERY_PORT = DISCOVERY_PORT
+    DISCOVERY_PER_HOST_S = DISCOVERY_PER_HOST_S
+
+    @classmethod
+    def discover(cls, timeout: float, hint: str | None = None) -> list[dict]:
+        """Core's discover hook: sweep the browser's network (*hint*), then
+        FiestaBoard's own, for Pixoos. Bounded by *timeout* (at most 10 s)."""
+        networks = candidate_subnets(hint_host=hint, local_ip=local_ipv4())
+        return sweep(
+            OutputHttp(),
+            _targets(networks, DISCOVERY_PORT),
+            per_host_s=DISCOVERY_PER_HOST_S,
+            total_s=min(float(timeout), DISCOVERY_TOTAL_S),
+        )
+
+    def action_find_pixoo(self, inputs: dict[str, Any]) -> ActionOutcome:
+        """"Find my Pixoo": sweep the given network, the browser's, then FiestaBoard's own."""
+        try:
+            networks = candidate_subnets(
+                subnet=inputs.get("subnet") or None, hint_host=inputs.get("hint_host"), local_ip=local_ipv4()
+            )
+        except ValueError as exc:
+            return ActionOutcome(status="error", message=f"Cannot search that network: {exc}.")
+        manual = [
+            "Type the Pixoo's address instead: in the Divoom app, open the device's settings, "
+            "or look for it in your router's list of connected devices.",
+            "Or enter your network, for example 192.168.1.0/24, and search again.",
+        ]
+        if not networks:
+            return ActionOutcome(
+                status="warning", message="FiestaBoard could not tell which network to search.", guidance=tuple(manual), devices=()
+            )
+        found = sweep(
+            self.http, _targets(networks, self.DISCOVERY_PORT), per_host_s=self.DISCOVERY_PER_HOST_S
+        )
+        searched = ", ".join(str(n) for n in networks)
+        if not found:
+            return ActionOutcome(
+                status="warning",
+                message=f"No Pixoo found on {searched}.",
+                guidance=tuple(_fence_guidance() + ["Check that the Pixoo is on and on the same network."] + manual),
+                devices=(),
+            )
+        return ActionOutcome(message=f"Found {len(found)} Pixoo(s) on {searched}.", devices=tuple(found))
+
+    def action_cloud_lookup(self, inputs: dict[str, Any]) -> ActionOutcome:
+        """Opt-in: ask Divoom's cloud which Pixoos share this network's public address."""
+        failed = "Divoom's servers did not return any Pixoo."
+        try:
+            response = self.http.post(DIVOOM_LAN_LOOKUP_URL, json={})
+            body = response.json() if response.status_code == 200 else None
+        except OutputHostBlocked:
+            return ActionOutcome(status="error", message="Not contacted: Divoom's servers are not allowed.", guidance=tuple(_fence_guidance()))
+        except (requests.RequestException, ValueError):
+            return ActionOutcome(status="error", message="Could not reach Divoom's servers.")
+        if not isinstance(body, dict) or body.get("ReturnCode") != 0:
+            return ActionOutcome(status="error", message=failed)
+        devices = [
+            _device(str(d["DevicePrivateIP"]), 80, str(d.get("DeviceName") or "Pixoo"),
+                    f"{d.get('DeviceName') or 'Pixoo'} ({d['DevicePrivateIP']})")
+            for d in body.get("DeviceList") or []
+            if isinstance(d, dict) and d.get("DevicePrivateIP")
+        ]
+        if not devices:
+            return ActionOutcome(status="warning", message=failed, devices=())
+        return ActionOutcome(message=f"Divoom's servers listed {len(devices)} Pixoo(s).", devices=tuple(devices))
 
     # --- probes -----------------------------------------------------------------------------
 

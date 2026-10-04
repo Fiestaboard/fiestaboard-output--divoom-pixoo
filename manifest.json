@@ -23,8 +23,10 @@
         "host": {
           "type": "string",
           "title": "Device address",
-          "description": "The Pixoo 64's IP address or hostname on your network (for example 192.168.1.50). Find it in the Divoom app under Device Settings.",
-          "minLength": 1
+          "description": "The Pixoo 64's IP address or hostname on your network (for example 192.168.1.50). Use Find my Pixoo, or type it in.",
+          "minLength": 1,
+          "ui:widget": "device-picker",
+          "ui:options": {"action": "find_pixoo", "value_key": "host", "label_key": "label"}
         },
         "brightness": {
           "type": "integer",
@@ -35,6 +37,34 @@
         }
       },
       "required": ["host"]
-    }
+    },
+    "actions": [
+      {
+        "id": "find_pixoo",
+        "label": "Find my Pixoo",
+        "description": "Looks for a Pixoo 64 on your local network. Only devices on your network are contacted.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "subnet": {
+              "type": "string",
+              "title": "Network to search",
+              "description": "Optional, for example 192.168.1.0/24. Leave empty to search the network FiestaBoard is on."
+            },
+            "hint_host": {
+              "type": "string",
+              "title": "Address you opened FiestaBoard at",
+              "description": "Optional. The network of this address is searched first."
+            }
+          }
+        }
+      },
+      {
+        "id": "cloud_lookup",
+        "label": "Ask Divoom's servers which Pixoos are on your network",
+        "description": "Sends a request to Divoom's cloud (app.divoom-gz.com). Divoom sees your public IP address and answers with the Pixoos registered from it. Use this only if Find my Pixoo finds nothing."
+      },
+      {"id": "test_connection", "label": "Test connection"}
+    ]
   }
 }
