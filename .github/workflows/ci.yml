@@ -10,9 +10,8 @@ on:
       core_ref:
         description: "FiestaBoard ref to test against (branch, tag or SHA)"
         required: false
-        # The layoutOptions (D23) core is #2207, below the stack top. Switch to next
-        # once stack #2208 merges (keep in step with `ref:` below).
-        default: feat/led-legibility-options
+        # Keep in step with `ref:` below.
+        default: next
 
 permissions:
   contents: read
@@ -47,14 +46,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: Fiestaboard/FiestaBoard
-          # The output-plugin API (src/outputs/plugin_base.py, output_api 1,
-          # self.http, write_transition, the conformance suite) is not on
-          # `next` or a released tag yet: it is in the unmerged output-plugins
-          # stack (#2208), so CI tests against one of its branches.
-          # Switch to next once stack #2208 merges; once a v10.0.0-beta.N tag
-          # exists, pin to it here and keep it equal to fiestaboard_version in
-          # manifest.json.
-          ref: ${{ inputs.core_ref || 'feat/led-legibility-options' }}
+          # The output-plugin API (output_api 1) is on `next` (FiestaBoard 10
+          # beta, stack #2208 merged). Once 10.0.0 is released, pin its tag.
+          ref: ${{ inputs.core_ref || 'next' }}
           path: fiestaboard-core
 
       - uses: actions/setup-python@v5
