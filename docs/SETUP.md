@@ -81,6 +81,8 @@ FiestaBoard sends at most one update per second. FiestaBoard sends at most one u
 | --- | --- | --- | --- | --- |
 | `host` | string | Yes | — | The Pixoo's IP address or hostname. A port is accepted (`192.168.1.50:80`); `http://` and any path are ignored. |
 | `brightness` | integer, 0–100 | No | the device's own | Screen brightness, applied after the first page lands. Leave it out to keep the brightness you set in the Divoom app. |
+| `tile_gap` | `"gap"` or `"fill"` | No | `"gap"` | **Tile style** on the board screen. Gaps keeps the one-pixel line between neighbouring color tiles; Seamless lights it when both are the same color, so a row of tiles reads as one solid bar. A corner pixel lights only when all four cells around it match. |
+| `block_padding` | `0` or `1` | No | `0` | **Block padding** on the board screen. 1 pixel grows the background of highlighted text (`{black/white:TEXT}`) one pixel on every side, so the letters never touch its edge. It never covers a neighbouring character, and a pixel between two different colors stays dark. |
 | `mac` | string, 12 hex digits | No | — | The Pixoo's MAC address, filled in by the Divoom cloud lookup. With it saved, the lookup finds this Pixoo again after its IP address changes. |
 
 **Environment variables**

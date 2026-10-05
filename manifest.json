@@ -1,7 +1,7 @@
 {
   "id": "divoom_pixoo",
   "name": "Divoom Pixoo 64",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Show your FiestaBoard pages on a Divoom Pixoo 64 LED matrix over your local network.",
   "author": "FiestaBoard Team",
   "repository": "https://github.com/Fiestaboard/fiestaboard-output--divoom-pixoo",
@@ -46,6 +46,34 @@
           "description": "Screen brightness from 0 to 100. Leave empty to keep the device's own setting.",
           "minimum": 0,
           "maximum": 100
+        },
+        "tile_gap": {
+          "type": "string",
+          "title": "Tile style",
+          "description": "Gaps keeps the one-pixel line between neighbouring color tiles, as on a split-flap board. Seamless lights it when both are the same color, so a row of tiles reads as one solid bar.",
+          "enum": [
+            "gap",
+            "fill"
+          ],
+          "enumNames": [
+            "Gaps",
+            "Seamless"
+          ],
+          "default": "gap"
+        },
+        "block_padding": {
+          "type": "integer",
+          "title": "Block padding",
+          "description": "1 pixel grows the background of highlighted text one pixel on every side, so the letters never touch its edge.",
+          "enum": [
+            0,
+            1
+          ],
+          "enumNames": [
+            "Off",
+            "1 pixel"
+          ],
+          "default": 0
         },
         "mac": {
           "type": "string",

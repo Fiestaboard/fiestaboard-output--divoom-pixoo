@@ -62,6 +62,8 @@ to the `led_3x5` character set), so colours and icons in a page reach the screen
 | --- | --- | --- | --- | --- |
 | `host` | string | Yes | — | The Pixoo's IP address or hostname, for example `192.168.1.50`. A port (`192.168.1.50:80`) is accepted; `http://` and any path are ignored. |
 | `brightness` | integer, 0–100 | No | the device's own | Screen brightness, set after the first frame lands. Leave it out to keep what you set in the Divoom app. |
+| `tile_gap` | `"gap"` or `"fill"` | No | `"gap"` | **Tile style** on the board screen. Gaps keeps the one-pixel line between neighbouring color tiles; Seamless lights it when both are the same color, so a row of tiles reads as one solid bar. A corner pixel lights only when all four cells around it match. |
+| `block_padding` | `0` or `1` | No | `0` | **Block padding** on the board screen. 1 pixel grows the background of highlighted text (`{black/white:TEXT}`) one pixel on every side, so the letters never touch its edge. It never covers a neighbouring character, and a pixel between two different colors stays dark. |
 | `mac` | string, 12 hex digits | No | — | The Pixoo's MAC address. Filled in by the Divoom cloud lookup, which then uses it to find this Pixoo again after its IP address changes. |
 
 No setting is secret: the Pixoo's local API has no authentication.
@@ -108,6 +110,8 @@ empty (or add your Pixoo's address) to search a real network.
 - Gives up a write as soon as a newer page arrives, between any two requests
 - Connection test that tells unreachable, timed-out, wrong-device and blocked-host cases apart
 - Optional brightness setting
+- **Tile style** (Gaps / Seamless) and **Block padding** (Off / 1 pixel) for crisper tile art and
+  highlighted text; the board's preview draws the same pixels
 - Honours `FIESTABOARD_OUTPUTS_ALLOW_HOSTS`: a host outside the list is never contacted
 
 ## How it works
@@ -192,7 +196,7 @@ timings are in the model's `animation.notes` in
 
 | File | Contents |
 | --- | --- |
-| [`output/device-models.json`](./output/device-models.json) | The `divoom_pixoo64` DeviceModel: 64×64 RGB pixels, `led_3x5` character set and 3×5 font (a 10-row × 16-column grid), square-pixel appearance, and `stream` animation at 2 frames a second (so FiestaBoard snaps), with the hardware-lab evidence and sources |
+| [`output/device-models.json`](./output/device-models.json) | The `divoom_pixoo64` DeviceModel: 64×64 RGB pixels, `led_3x5` character set and 3×5 font (a 10-row × 16-column grid), the LED layout options a board may choose (`layoutOptions`), square-pixel appearance, and `stream` animation at 2 frames a second (so FiestaBoard snaps), with the hardware-lab evidence and sources |
 
 The data is plain JSON validated against FiestaUI's DeviceModel JSON Schema. The plugin's manifest
 points at it (`"device_models": {"$ref": "output/device-models.json"}`), so FiestaBoard, FiestaUI
@@ -203,14 +207,15 @@ and this plugin read one copy.
 The model started as FiestaUI's `divoom_pixoo64` from the LED-matrix work (commit
 `a70b7198f3ab6d7f96faf75f13260a4f2f5fceed`, FiestaUI PR #326). Its `animation` block was then
 rewritten from the 2026-10-04 hardware lab: `stream` at `maxFps` 2, with the lab's evidence in
-`notes` and `sources`. FiestaUI mirrors this model field for field in its built-in. Every other
-field is unchanged. The file validates against FiestaUI's DeviceModel JSON Schema as vendored in
+`notes` and `sources`. Version 0.3.0 adds `layoutOptions` from FiestaUI PR #338: both tile gaps
+and both block paddings allowed, with today's look (`"gap"`, `0`) the default. FiestaUI mirrors
+this model field for field in its built-in. Every other field is unchanged. The file validates against FiestaUI's DeviceModel JSON Schema as vendored in
 FiestaBoard.
 
 | File | sha256 |
 | --- | --- |
-| `output/device-models.json` | `63e4be3e4850fa7e360f454ae011aa4411e4eab2dbe39301addfb39bbe8bee70` |
-| `device-model.schema.json` | `ef3129dac12f01f9a515b9d1798376881475472fa79dfd168ff5ee5c6f349ffb` |
+| `output/device-models.json` | `84eff14306316a1f19713d42c1046d5d0cca7d459309ee1724d8fb5b0b5ecad0` |
+| `device-model.schema.json` | `903597ae530303b276995a0c01051e25a11bc5facd272d6e52931102bb1e2a61` |
 | `character-set.schema.json` | `69efe686fc58060361d279be453b12f44395fa1a879dcac7c82ce559628437b3` |
 
 Preview cosmetics (square pixels at 0.82 of the pitch, off-LED and substrate colours) live in the

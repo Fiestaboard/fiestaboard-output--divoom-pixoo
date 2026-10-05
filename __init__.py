@@ -352,12 +352,11 @@ class DivoomPixoo(OutputPluginBase):
     # --- rendering ---------------------------------------------------------------------------
 
     def _render_setup(self) -> tuple[Any, LedLayoutOptions]:
-        """The board's matrix spec and layout options, from what core resolved."""
+        """The board's matrix spec and layout options, from what core resolved:
+        its character set and its Tile style / Block padding settings
+        (``tile_gap`` / ``block_padding``), checked against the model."""
         if self._renderer is None:
-            self._renderer = (
-                led_spec_for_model(self.device_model),
-                LedLayoutOptions(charset=self.character_set),
-            )
+            self._renderer = (led_spec_for_model(self.device_model), self.led_layout_options())
         return self._renderer
 
     def layout(self, frame: Sequence[Sequence[Any]]) -> Any:
