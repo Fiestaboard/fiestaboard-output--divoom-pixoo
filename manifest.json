@@ -1,0 +1,129 @@
+{
+  "id": "divoom_pixoo",
+  "name": "Divoom Pixoo 64",
+  "version": "0.3.0",
+  "description": "Show your FiestaBoard pages on a Divoom Pixoo 64 LED matrix over your local network.",
+  "author": "FiestaBoard Team",
+  "repository": "https://github.com/Fiestaboard/fiestaboard-output--divoom-pixoo",
+  "icon": "grid-3x3",
+  "category": "output",
+  "plugin_type": "output",
+  "fiestaboard_version": ">=10.0.0",
+  "data_files": [
+    "output/device-models.json"
+  ],
+  "output": {
+    "output_api": 1,
+    "device_models": {
+      "$ref": "output/device-models.json"
+    },
+    "delivery": "push",
+    "min_interval_ms": 1000,
+    "read_back": {
+      "supported": false,
+      "cost": "cheap",
+      "suggested_interval_s": 30
+    },
+    "native_transitions": [],
+    "settings_schema": {
+      "type": "object",
+      "properties": {
+        "host": {
+          "type": "string",
+          "title": "Device address",
+          "description": "The Pixoo 64's IP address or hostname on your network (for example 192.168.1.50). Use Find my Pixoo, or type it in.",
+          "minLength": 1,
+          "ui:widget": "device-picker",
+          "ui:options": {
+            "action": "find_pixoo",
+            "value_key": "host",
+            "label_key": "label"
+          }
+        },
+        "brightness": {
+          "type": "integer",
+          "title": "Brightness",
+          "description": "Screen brightness from 0 to 100. Leave empty to keep the device's own setting.",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "tile_gap": {
+          "type": "string",
+          "title": "Tile style",
+          "description": "Gaps keeps the one-pixel line between neighbouring color tiles, as on a split-flap board. Seamless lights it when both are the same color, so a row of tiles reads as one solid bar.",
+          "enum": [
+            "gap",
+            "fill"
+          ],
+          "enumNames": [
+            "Gaps",
+            "Seamless"
+          ],
+          "default": "gap"
+        },
+        "block_padding": {
+          "type": "integer",
+          "title": "Block padding",
+          "description": "1 pixel grows the background of highlighted text one pixel on every side, so the letters never touch its edge.",
+          "enum": [
+            0,
+            1
+          ],
+          "enumNames": [
+            "Off",
+            "1 pixel"
+          ],
+          "default": 0
+        },
+        "mac": {
+          "type": "string",
+          "title": "Device MAC address",
+          "description": "Optional. Filled in by the Divoom cloud lookup so the lookup can find this Pixoo again if its IP address changes. 12 hex digits.",
+          "pattern": "^[0-9a-fA-F]{12}$"
+        }
+      },
+      "required": [
+        "host"
+      ]
+    },
+    "actions": [
+      {
+        "id": "find_pixoo",
+        "label": "Find my Pixoo",
+        "description": "Looks for a Pixoo 64 on your local network. Only devices on your network are contacted.",
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "subnet": {
+              "type": "string",
+              "title": "Network to search",
+              "description": "Optional, for example 192.168.1.0/24. Leave empty to search the network FiestaBoard is on."
+            },
+            "hint_host": {
+              "type": "string",
+              "title": "Address you opened FiestaBoard at",
+              "description": "Optional. The network of this address is searched first."
+            }
+          }
+        }
+      },
+      {
+        "id": "cloud_lookup",
+        "label": "Ask Divoom's servers which Pixoos are on your network",
+        "description": "Sends one request to Divoom's cloud (app.divoom-gz.com). Divoom sees your public IP address and answers with the Pixoos registered from it. If this board has a saved MAC address, it finds that Pixoo again at its current address. Use this only if Find my Pixoo finds nothing.",
+        "result_fields": {
+          "host": {
+            "fills": "host"
+          },
+          "mac": {
+            "fills": "mac"
+          }
+        }
+      },
+      {
+        "id": "test_connection",
+        "label": "Test connection"
+      }
+    ]
+  }
+}

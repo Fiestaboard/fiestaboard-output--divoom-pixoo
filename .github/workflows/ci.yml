@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      core_ref:
+        description: "FiestaBoard ref to test against (branch, tag or SHA)"
+        required: false
+        # The layoutOptions (D23) core is #2207, below the stack top. Switch to next
+        # once stack #2208 merges (keep in step with `ref:` below).
+        default: feat/led-legibility-options
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  versions:
+    name: package.json matches manifest.json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compare versions
+        run: |
+          python3 - <<'PY'
+          import json, sys
+          manifest = json.load(open("manifest.json"))["version"]
+          package = json.load(open("package.json"))["version"]
+          if manifest != package:
+              sys.exit(f"package.json version {package} != manifest.json version {manifest}; bump both together")
+          print(f"versions agree: {manifest}")
+          PY
+
+  test:
+    name: Tests and output conformance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Fiestaboard/FiestaBoard
+          # The output-plugin API (src/outputs/plugin_base.py, output_api 1,
+          # self.http, write_transition, the conformance suite) is not on
+          # `next` or a released tag yet: it is in the unmerged output-plugins
+          # stack (#2208), so CI tests against one of its branches.
+          # Switch to next once stack #2208 merges; once a v10.0.0-beta.N tag
+          # exists, pin to it here and keep it equal to fiestaboard_version in
+          # manifest.json.
+          ref: ${{ inputs.core_ref || 'feat/led-legibility-options' }}
+          path: fiestaboard-core
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: fiestaboard-core/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          pip install -r fiestaboard-core/requirements.txt
+          pip install pytest pytest-cov pytest-socket
+
+      # The tests include core's OutputConformanceSuite run against this
+      # plugin; the network fence allows loopback only.
+      - name: Run tests (loopback only) with the conformance suite
+        run: ./run_tests.sh fiestaboard-core
