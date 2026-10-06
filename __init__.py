@@ -56,6 +56,7 @@ import socket
 import time
 from collections.abc import Sequence
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from dataclasses import replace
 from typing import Any
 
 import requests
@@ -106,8 +107,24 @@ SEQUENCE_MAX_FRAMES = 40
 #: sent, each push taking ~0.19 s).
 STREAM_MAX_FPS = 5
 
-#: Brightness steps each way in a fade through black (~75 ms per step).
+#: The shortest a continuous transition (slide, wipe, cascade, dissolve,
+#: blend) runs when nothing asked for a duration: core's default (480 ms) is
+#: three frames at the stream rate, which reads as a jump; a second is five
+#: (lab 2 played them at this length).
+STREAM_TRANSITION_MS = 1000
+
+#: Brightness steps each way in a fade through black, and the time each
+#: step takes. The command answers in 30-75 ms; unpaced, the dim is over in
+#: a quarter of a second and reads as a cut to black (camera-checked), so
+#: each step is held to about 90 ms: about a second for the whole fade.
 FADE_STEPS = 5
+FADE_STEP_S = 0.09
+
+#: How long a fade stays black after the new image is pushed. The device
+#: answers a push before it shows the image (up to ~0.5 s later) while a
+#: brightness change is immediate: brightening at once lit the OLD page
+#: again for a moment (camera-checked).
+FADE_SWAP_S = 0.45
 
 #: ``(connect, read)`` timeouts for one command.
 CONNECT_TIMEOUT_S = 3.0
@@ -342,6 +359,8 @@ class DivoomPixoo(OutputPluginBase):
 
     # Device pacing, as instance-overridable attributes (tests shorten them).
     RESET_AFTER_PUSHES = RESET_AFTER_PUSHES
+    FADE_STEP_S = FADE_STEP_S
+    FADE_SWAP_S = FADE_SWAP_S
     #: Seconds between streamed frames; ``None`` = one frame at the model's
     #: rate (capped at :data:`STREAM_MAX_FPS`). Tests set 0.
     STREAM_STEP_S: float | None = None
@@ -554,8 +573,15 @@ class DivoomPixoo(OutputPluginBase):
     def _set_brightness(self, level: int, *, always: bool = False) -> None:
         self._post({"Command": SET_BRIGHTNESS, "Brightness": level}, setup=True, cancel=_NEVER if always else None)
 
+    def _fade_step(self, level: int, cancel: CancelToken) -> bool:
+        """One paced step of a fade; True when the run was cancelled meanwhile."""
+        started = time.monotonic()
+        self._set_brightness(level)
+        left = self.FADE_STEP_S - (time.monotonic() - started)
+        return left > 0 and self._wait(left, cancel)
+
     def _fade_through_black(self, target: bytes, cancel: CancelToken) -> WriteResult:
-        """Dim to black, swap in *target*, brighten back (~1.1 s on the device).
+        """Dim to black, swap in *target*, hold, brighten back (~1.3 s on the device).
 
         The board's brightness comes back whatever happens: a cancel or a
         failure part-way still restores it before returning. When the level
@@ -571,17 +597,17 @@ class DivoomPixoo(OutputPluginBase):
         result = WriteResult(True, False)
         try:
             for step in down:
-                if cancel.cancelled:
+                if cancel.cancelled or self._fade_step(step, cancel):
                     return result
-                self._set_brightness(step)
             failed = self._deliver([target], [STILL_SPEED_MS], cancel)
             if failed is not None:
                 return failed
-            for step in reversed(down[:-1]):
-                if cancel.cancelled:
-                    break
-                self._set_brightness(step)
             result = WriteResult(True, True)
+            if self._wait(self.FADE_SWAP_S, cancel):
+                return result
+            for step in reversed(down[:-1]):
+                if cancel.cancelled or self._fade_step(step, cancel):
+                    break
             return result
         except Exception as exc:
             logger.warning("Pixoo %s: fade through black failed: %s", self.host, exc)
@@ -631,6 +657,8 @@ class DivoomPixoo(OutputPluginBase):
         spec = transition.spec
         if getattr(spec, "kind", None) == "fade" and self.config.get("fade_style", "black") != "blend":
             return self._fade_through_black(self.render(after), cancel)
+        if spec.kind != "flip" and spec.duration_ms is None:
+            spec = replace(spec, duration_ms=STREAM_TRANSITION_MS)
         planned = plan_transition(self.layout(before), self.layout(after), spec)
         fps = self._stream_fps()
         # Frame 0 is *before*, which the device already shows.

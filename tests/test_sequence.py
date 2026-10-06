@@ -113,6 +113,20 @@ def test_every_pixel_transition_streams_and_lands_on_the_target(pixoo, make_plug
     assert BRIGHTNESS not in pixoo.names()
 
 
+def test_a_continuous_transition_with_no_duration_runs_at_least_a_second(pixoo, make_plugin):
+    plugin = make_plugin()
+    plugin.write_transition(cells(1), cells(2), explicit("slide"), cancel=CancelToken())
+    # 1000 ms at 5 fps: five frames after the one already on screen.
+    assert len(pixoo.pushes()) == 5
+
+
+def test_an_explicit_duration_is_kept(pixoo, make_plugin):
+    plugin = make_plugin()
+    spec = ResolvedLedTransition("slide", LedTransitionSpec("slide", duration_ms=400), "explicit")
+    plugin.write_transition(cells(1), cells(2), spec, cancel=CancelToken())
+    assert len(pixoo.pushes()) == 2
+
+
 def test_a_slower_model_plans_fewer_frames_and_paces_them_wider(pixoo, make_plugin, monkeypatch):
     plugin = make_plugin()
     plugin.write_transition(cells(1), cells(2), explicit("wipe"), cancel=CancelToken())
@@ -225,6 +239,28 @@ def test_a_fade_dims_to_black_swaps_and_comes_back_to_the_devices_own_brightness
     before_swap = [c for c in pixoo.commands[: names.index(SEND)] if c.get("Command") == BRIGHTNESS]
     assert before_swap[-1]["Brightness"] == 0
     assert [(c["PicNum"], c["PicData"]) for c in pixoo.pushes()] == [(1, data(2))]
+
+
+def test_fade_steps_are_paced(pixoo, make_plugin):
+    plugin = make_plugin()
+    plugin.FADE_STEP_S = 0.05
+    started = time.monotonic()
+    plugin.write_transition(cells(1), cells(2), explicit("fade"), cancel=CancelToken())
+    # Nine paced steps (five down, four up); the restore is not paced.
+    assert time.monotonic() - started >= 9 * 0.05 - 0.02
+
+
+def test_a_fade_stays_black_until_the_new_image_has_had_time_to_show(pixoo, make_plugin):
+    plugin = make_plugin()
+    plugin.FADE_SWAP_S = 0.2
+    stamps: list[tuple[str, int | None, float]] = []
+    pixoo.on_command = lambda command, index: stamps.append(
+        (command.get("Command"), command.get("Brightness"), time.monotonic())
+    )
+    plugin.write_transition(cells(1), cells(2), explicit("fade"), cancel=CancelToken())
+    swap = next(t for name, _, t in stamps if name == SEND)
+    first_up = next(t for name, level, t in stamps if name == BRIGHTNESS and t > swap)
+    assert first_up - swap >= 0.2 - 0.01
 
 
 def test_a_fade_uses_the_boards_brightness_without_asking_the_device(pixoo, make_plugin):
