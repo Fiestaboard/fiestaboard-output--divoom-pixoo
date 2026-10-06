@@ -1,7 +1,7 @@
 {
   "id": "divoom_pixoo",
   "name": "Divoom Pixoo 64",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Show your FiestaBoard pages on a Divoom Pixoo 64 LED matrix over your local network.",
   "author": "FiestaBoard Team",
   "repository": "https://github.com/Fiestaboard/fiestaboard-output--divoom-pixoo",
@@ -74,6 +74,20 @@
             "1 pixel"
           ],
           "default": 0
+        },
+        "fade_style": {
+          "type": "string",
+          "title": "Fade style",
+          "description": "How the Fade transition looks. Through black dims the screen, swaps the message and brightens it again (smooth, about a second). Blend cross-fades the two messages in a few steps.",
+          "enum": [
+            "black",
+            "blend"
+          ],
+          "enumNames": [
+            "Through black",
+            "Blend"
+          ],
+          "default": "black"
         },
         "mac": {
           "type": "string",

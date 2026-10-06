@@ -5,22 +5,31 @@ one JSON command per request). Core owns the policy — the send floor
 (``min_interval_ms``, 1 s between writes), dedupe, preemption, the write
 budget and which LED transition a board runs — and this plugin moves pixels.
 
-What the 2026-10-04 hardware lab (camera-timed, on a real Pixoo 64) settled:
+What the hardware labs (camera-timed, on a real Pixoo 64) settled:
 
-- **The Pixoo snaps.** An uploaded animation loops forever (there is no
-  play-once), an upload of more than ~3 frames shows a "LOADING" overlay
-  (~6 s for 40 frames), and landing on a still after an animation glitches
-  for ~5 s. A single-frame push shows in ~0.5 s with no overlay. So the
-  device model streams at ``maxFps`` 2, under every LED transition's
-  minimum: the resolved transition is ``none`` and preview and device both
-  cut to the new page.
-- **write / write_cells / write_transition** push one still frame:
-  ``Draw/SendHttpGif`` with ``PicNum`` 1. Text is drawn into the image
+- **An uploaded animation is the wrong tool.** It loops forever (no
+  play-once), an upload of more than ~3 frames shows a "LOADING" overlay, and
+  landing on a still after one glitches for ~5 s (lab 1, 2026-10-04).
+- **A stream of single frames is the right one** (lab 2, 2026-10-05). Each
+  ``Draw/SendHttpGif`` with ``PicNum`` 1 shows once, with no overlay and no
+  loop, and the last frame lands cleanly. The device takes about five a
+  second (each push ~0.19 s whatever the frame size): paced at 5 fps, 19 of
+  20 frames showed and the final frame always did. So the device model
+  streams at ``maxFps`` 5 and every LED transition core plans is played as
+  paced stills at up to :data:`STREAM_MAX_FPS`: flip, slide, wipe, cascade,
+  dissolve and fade all verified on the panel.
+- **Fade goes through black** by default: ``Channel/SetBrightness`` answers
+  in ~75 ms, so dimming to 0, swapping the image and brightening back takes
+  ~1.1 s and looks far smoother than a 5-frame cross-fade. The board's
+  brightness is always restored, even when a newer page cuts it short.
+  ``fade_style: blend`` keeps the pixel cross-fade.
+- **write / write_cells** push one still frame. Text is drawn into the image
   (``Draw/SendHttpText`` is an overlay that every new image wipes).
-- **write_sequence** (only an explicit caller; core never asks this model)
-  uploads up to :data:`SEQUENCE_MAX_FRAMES` frames back-to-back as one GIF,
-  which LOOPS on the device; once it is ready and has played once, the
-  target is pushed as a still — expect the ~5 s landing glitch.
+- **write_sequence** streams its frames the same way, each held its own
+  duration (never shorter than one stream step), at most
+  :data:`SEQUENCE_MAX_FRAMES` (compressed evenly, first and last kept).
+- Two requests in flight, or many frames in one ``Draw/CommandList``, show
+  only the last frame: frames are always sent one at a time, in order.
 - **PicID policy.** A session (the first upload of an instance, or after a
   failed or cancelled one) starts with ``Draw/ResetHttpGifId`` and is
   seeded from ``Draw/GetHttpGifId`` (0 means 1); after
@@ -88,17 +97,17 @@ __all__ = ["DivoomPixoo", "PixooError", "candidate_subnets", "is_pixoo_reply", "
 #: under 25 ids between resets); a reset needs no wait afterwards (verified).
 RESET_AFTER_PUSHES = 32
 
-#: The most frames one explicit sequence upload carries. The lab saw 59
-#: frames accepted but playback wrap at ~55 (later frames silently dropped);
-#: 40 played completely, and community reports crashes above ~40.
+#: The most frames one explicit sequence streams (compressed evenly beyond
+#: it): at the stream rate that is already eight seconds of animation.
 SEQUENCE_MAX_FRAMES = 40
 
-#: The shortest ``PicSpeed`` an upload asks for (80 ms was honoured).
-MIN_FRAME_MS = 80
+#: The fastest the device shows a stream of single frames (lab 2: paced at
+#: 5 fps, 19 of 20 frames showed and the last always did; 6 fps cannot be
+#: sent, each push taking ~0.19 s).
+STREAM_MAX_FPS = 5
 
-#: After the last frame of a multi-frame upload, the LOADING overlay stays
-#: ~0.5 s before the animation shows (lab-measured).
-ANIMATION_READY_S = 0.5
+#: Brightness steps each way in a fade through black (~75 ms per step).
+FADE_STEPS = 5
 
 #: ``(connect, read)`` timeouts for one command.
 CONNECT_TIMEOUT_S = 3.0
@@ -312,6 +321,15 @@ def _fence_guidance() -> list[str]:
     return []
 
 
+class _Never:
+    """A cancel token that never fires."""
+
+    cancelled = False
+
+
+_NEVER = _Never()
+
+
 def _token(cell: Any) -> BoardToken:
     """One cell as a board token: a rich cell as is, a 0-71 code projected."""
     return cell if isinstance(cell, BoardToken) else cells_from_codes([[int(cell)]])[0][0]
@@ -324,7 +342,9 @@ class DivoomPixoo(OutputPluginBase):
 
     # Device pacing, as instance-overridable attributes (tests shorten them).
     RESET_AFTER_PUSHES = RESET_AFTER_PUSHES
-    ANIMATION_READY_S = ANIMATION_READY_S
+    #: Seconds between streamed frames; ``None`` = one frame at the model's
+    #: rate (capped at :data:`STREAM_MAX_FPS`). Tests set 0.
+    STREAM_STEP_S: float | None = None
     CONNECT_TIMEOUT_S = CONNECT_TIMEOUT_S
     READ_TIMEOUT_S = READ_TIMEOUT_S
 
@@ -370,8 +390,11 @@ class DivoomPixoo(OutputPluginBase):
 
     # --- the device seam ----------------------------------------------------------------------
 
-    def _post(self, payload: dict[str, Any], *, setup: bool = False) -> dict[str, Any]:
+    def _post(self, payload: dict[str, Any], *, setup: bool = False, cancel: Any = None) -> dict[str, Any]:
         """Send one command through ``self.http``; the device's JSON reply, or raise.
+
+        *cancel* overrides the run's cancel token (``_NEVER`` sends even after
+        the run was cancelled: restoring brightness must not be skipped).
 
         Raises:
             requests.RequestException: no answer, a fenced host
@@ -380,8 +403,9 @@ class DivoomPixoo(OutputPluginBase):
         """
         if not self.host:
             raise _NoHost("No device address configured")
+        extra = {} if cancel is None else {"cancel": cancel}
         response = self.http.post(
-            self.url, json=payload, setup=setup, timeout=(self.CONNECT_TIMEOUT_S, self.READ_TIMEOUT_S)
+            self.url, json=payload, setup=setup, timeout=(self.CONNECT_TIMEOUT_S, self.READ_TIMEOUT_S), **extra
         )
         if response.status_code != 200:
             raise PixooStatusError(response.status_code)
@@ -492,26 +516,93 @@ class DivoomPixoo(OutputPluginBase):
         self._apply_brightness(cancel)
         return WriteResult(True, True)
 
-    def _sequence(self, frames: list[bytes], speeds: list[int], target: bytes, cancel: CancelToken) -> WriteResult:
-        """The explicit sequence path: one looping GIF, then *target* still.
+    def _stream(self, frames: list[bytes], holds_s: list[float], cancel: CancelToken) -> WriteResult:
+        """Show *frames* one at a time, frame *i* held ``holds_s[i]`` seconds
+        (never less than one stream step); the last one stays.
 
-        The device loops the GIF forever; once it is ready (~0.5 s after the
-        last frame) and has played through once, *target* replaces it. Expect
-        ~5 s in which the old loop keeps running with frame 0 replaced.
+        Each frame is its own ``PicNum`` 1 push, so it plays once and the last
+        lands cleanly. A cancel between frames stops at once: a newer page is
+        on its way, and it is not a device failure.
         """
-        if len(frames) < 2:
-            return self._still(target, cancel)
-        if len(frames) > SEQUENCE_MAX_FRAMES:
-            last = len(frames) - 1
-            picks = sorted({round(i * last / (SEQUENCE_MAX_FRAMES - 1)) for i in range(SEQUENCE_MAX_FRAMES)})
-            frames, speeds = [frames[i] for i in picks], [speeds[i] for i in picks]
-        failed = self._deliver(frames, speeds, cancel)
-        if failed is not None:
-            return failed
-        if self._wait(self.ANIMATION_READY_S + sum(speeds) / 1000.0, cancel):
-            self._next_pic_id = None
+        if not frames:
             return WriteResult(True, False)
-        return self._still(target, cancel)
+        last = len(frames) - 1
+        step = self._step_s()
+        for index, pixels in enumerate(frames):
+            started = time.monotonic()
+            failed = self._deliver([pixels], [STILL_SPEED_MS], cancel)
+            if failed is not None:
+                return failed
+            if index < last:
+                hold = max(holds_s[index], step) - (time.monotonic() - started)
+                if hold > 0 and self._wait(hold, cancel):
+                    return WriteResult(True, False)
+        self._apply_brightness(cancel)
+        return WriteResult(True, True)
+
+    def _current_brightness(self) -> int | None:
+        """The brightness to come back to: the board's setting, else the
+        device's own; ``None`` when the device does not say."""
+        if self._brightness is not None:
+            return self._brightness
+        try:
+            level = self._post({"Command": GET_ALL_CONF}, setup=True).get("Brightness")
+        except Exception:
+            return None
+        return level if isinstance(level, int) and not isinstance(level, bool) and 0 <= level <= 100 else None
+
+    def _set_brightness(self, level: int, *, always: bool = False) -> None:
+        self._post({"Command": SET_BRIGHTNESS, "Brightness": level}, setup=True, cancel=_NEVER if always else None)
+
+    def _fade_through_black(self, target: bytes, cancel: CancelToken) -> WriteResult:
+        """Dim to black, swap in *target*, brighten back (~1.1 s on the device).
+
+        The board's brightness comes back whatever happens: a cancel or a
+        failure part-way still restores it before returning. When the level
+        to come back to is unknown, it snaps instead: a guess could leave the
+        screen brighter or dimmer than its owner set it.
+        """
+        if cancel.cancelled:
+            return WriteResult(True, False)
+        level = self._current_brightness()
+        if level is None:
+            return self._still(target, cancel)
+        down = [round(level * (FADE_STEPS - 1 - i) / FADE_STEPS) for i in range(FADE_STEPS)]
+        result = WriteResult(True, False)
+        try:
+            for step in down:
+                if cancel.cancelled:
+                    return result
+                self._set_brightness(step)
+            failed = self._deliver([target], [STILL_SPEED_MS], cancel)
+            if failed is not None:
+                return failed
+            for step in reversed(down[:-1]):
+                if cancel.cancelled:
+                    break
+                self._set_brightness(step)
+            result = WriteResult(True, True)
+            return result
+        except Exception as exc:
+            logger.warning("Pixoo %s: fade through black failed: %s", self.host, exc)
+            return WriteResult(False, False)
+        finally:
+            try:
+                self._set_brightness(level, always=True)
+                self._brightness_pending = False
+            except Exception as exc:
+                logger.warning("Pixoo %s: restoring brightness %s failed: %s", self.host, level, exc)
+                self._brightness_pending = self._brightness is not None
+
+    def _step_s(self) -> float:
+        """The shortest gap between streamed frames."""
+        return 1.0 / self._stream_fps() if self.STREAM_STEP_S is None else self.STREAM_STEP_S
+
+    def _stream_fps(self) -> float:
+        """Frames a second to plan a transition at: the model's rate, capped by the device's."""
+        animation = (self.device_model or {}).get("animation") if isinstance(self.device_model, dict) else None
+        rate = animation.get("maxFps") if isinstance(animation, dict) else None
+        return float(min(rate, STREAM_MAX_FPS)) if isinstance(rate, (int, float)) and rate > 0 else STREAM_MAX_FPS
 
     # --- writes --------------------------------------------------------------------------------
 
@@ -529,30 +620,38 @@ class DivoomPixoo(OutputPluginBase):
         *,
         cancel: CancelToken,
     ) -> WriteResult:
-        """Show *after*. For the Pixoo model core resolves ``none``: one still push.
+        """Show *after* through the transition core resolved for this board.
 
-        An explicit transition spec (a caller overriding the model) is planned
-        with core's renderer and goes through the looping sequence path.
+        ``none`` is one still push. A fade goes through black unless the
+        board's ``fade_style`` is ``blend``. Every other kind is planned with
+        core's renderer at the stream rate and played as paced stills.
         """
         if transition.spec == "none":
             return self._still(self.render(after), cancel)
-        planned = plan_transition(self.layout(before), self.layout(after), transition.spec)
-        step_ms = MIN_FRAME_MS
-        if planned.frame_count and planned.frame_count > 1:
-            step_ms = max(step_ms, round(planned.duration_ms / (planned.frame_count - 1)))
+        spec = transition.spec
+        if getattr(spec, "kind", None) == "fade" and self.config.get("fade_style", "black") != "blend":
+            return self._fade_through_black(self.render(after), cancel)
+        planned = plan_transition(self.layout(before), self.layout(after), spec)
+        fps = self._stream_fps()
         # Frame 0 is *before*, which the device already shows.
-        frames = [f.pixels for f in transition_frames(planned, fps=1000 / step_ms)][1:]
-        return self._sequence(frames, [step_ms] * len(frames), planned.to_frame.pixels, cancel)
+        frames = [f.pixels for f in transition_frames(planned, fps=fps)][1:]
+        target = planned.to_frame.pixels
+        if not frames or frames[-1] != target:
+            frames.append(target)
+        return self._stream(frames, [0.0] * len(frames), cancel)
 
     def write_sequence(self, frames: list[TimedFrame], *, cancel: CancelToken) -> WriteResult:
-        """Frames as one looping GIF (at most :data:`SEQUENCE_MAX_FRAMES`,
-        compressed evenly, first and last kept), each shown at least
-        :data:`MIN_FRAME_MS`, then the last frame as a still."""
+        """*frames* as paced stills, each held its own duration (never shorter
+        than one stream step), at most :data:`SEQUENCE_MAX_FRAMES`
+        (compressed evenly, first and last kept); the last one stays."""
         if not frames:
             return WriteResult(True, False)
+        if len(frames) > SEQUENCE_MAX_FRAMES:
+            last = len(frames) - 1
+            picks = sorted({round(i * last / (SEQUENCE_MAX_FRAMES - 1)) for i in range(SEQUENCE_MAX_FRAMES)})
+            frames = [frames[i] for i in picks]
         pixels = [self.render(f.frame) for f in frames]
-        speeds = [max(MIN_FRAME_MS, int(f.duration_ms)) for f in frames]
-        return self._sequence(pixels, speeds, pixels[-1], cancel)
+        return self._stream(pixels, [max(0, int(f.duration_ms)) / 1000.0 for f in frames], cancel)
 
     # --- finding the device ------------------------------------------------------------------
 
