@@ -25,6 +25,11 @@ What the hardware labs (camera-timed, on a real Pixoo 64) settled:
   ``fade_style: blend`` keeps the pixel cross-fade.
 - **write / write_cells** push one still frame. Text is drawn into the image
   (``Draw/SendHttpText`` is an overlay that every new image wipes).
+- **Pixel canvases** (a page's bitmap layers, ``frame.layers`` on cores that
+  have them) are drawn by core's ``layout_message`` over the text, so stills,
+  every streamed transition (core switches layers half-way through a per-cell
+  one) and the fade's target all carry them. An older core has no layers and
+  no ``layers=`` keyword; the plugin then lays out exactly as before.
 - **write_sequence** streams its frames the same way, each held its own
   duration (never shorter than one stream step), at most
   :data:`SEQUENCE_MAX_FRAMES` (compressed evenly, first and last kept).
@@ -48,6 +53,7 @@ commands are marked ``setup=True``. Device failures come back as a failed
 from __future__ import annotations
 
 import base64
+import inspect
 import ipaddress
 import logging
 import os
@@ -57,6 +63,7 @@ import time
 from collections.abc import Sequence
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import replace
+from functools import lru_cache
 from typing import Any
 
 import requests
@@ -352,6 +359,13 @@ def _token(cell: Any) -> BoardToken:
     return cell if isinstance(cell, BoardToken) else cells_from_codes([[int(cell)]])[0][0]
 
 
+@lru_cache(maxsize=4)
+def _takes_layers(layout: Any) -> bool:
+    """Whether *layout* (core's ``layout_message``) draws bitmap layers:
+    FiestaBoard before pixel canvases has no ``layers`` keyword."""
+    return "layers" in inspect.signature(layout).parameters
+
+
 class DivoomPixoo(OutputPluginBase):
     """One Divoom Pixoo 64 on the local network."""
 
@@ -399,9 +413,19 @@ class DivoomPixoo(OutputPluginBase):
         return self._renderer
 
     def layout(self, frame: Sequence[Sequence[Any]]) -> Any:
-        """*frame* (0-71 codes or rich cells) laid out on the board's matrix."""
+        """*frame* (0-71 codes or rich cells) laid out on the board's matrix,
+        with the pixel canvases it carries (``frame.layers``) drawn over it.
+
+        ``layers=`` is passed only when there are some and core's
+        ``layout_message`` takes them, so a frame without canvases (and any
+        frame on an older core) lays out exactly as it always did.
+        """
         spec, options = self._render_setup()
-        return layout_message([[_token(cell) for cell in row] for row in frame], spec, options)
+        tokens = [[_token(cell) for cell in row] for row in frame]
+        layers = tuple(getattr(frame, "layers", None) or ())
+        if layers and _takes_layers(layout_message):
+            return layout_message(tokens, spec, options, layers=layers)
+        return layout_message(tokens, spec, options)
 
     def render(self, frame: Sequence[Sequence[Any]]) -> bytes:
         """*frame* as the device's RGB888 pixels, row-major from the top left."""

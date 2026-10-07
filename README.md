@@ -117,6 +117,9 @@ empty (or add your Pixoo's address) to search a real network.
 - Connection test that tells unreachable, timed-out, wrong-device and blocked-host cases apart
 - Optional brightness setting
 - **Text size** (Large 5×7 / Small 3×5): the board resizes to match, and its preview follows
+- **Pixel canvases**: a page's canvases (pictures and pixel drawings) are drawn over its text, in
+  stills and in every transition (needs a FiestaBoard with canvas pages; older versions show the
+  text alone)
 - **Tile style** (Gaps / Seamless) and **Block padding** (Off / 1 pixel) for crisper tile art and
   highlighted text; the board's preview draws the same pixels
 - Honours `FIESTABOARD_OUTPUTS_ALLOW_HOSTS`: a host outside the list is never contacted
@@ -127,11 +130,22 @@ empty (or add your Pixoo's address) to search a real network.
 `Draw/SendHttpGif` with `PicNum` 1, `PicWidth` 64, `PicOffset` 0, the next `PicID` and the
 pixels base64-encoded in `PicData`.
 
+**Pixel canvases.** On a FiestaBoard with canvas pages, the rich frame carries the page's
+canvases as bitmap layers (`frame.layers`: position, size and RGBA pixels). The plugin hands them
+to FiestaBoard's LED renderer (`layout_message(..., layers=...)`), which paints them over the
+cells: a pixel with any opacity replaces what is under it, a transparent one leaves it. A
+frame without canvases lays out exactly as before, and on an older FiestaBoard (no `layers`
+keyword) the plugin never passes them, so nothing changes there.
+
 **A page change** (`write_transition`): FiestaBoard resolves the board's LED transition for the
 Pixoo model (flip by default; the board or page can pick another from the menu FiestaBoard offers
 for a 5 fps stream). The plugin plans it with FiestaBoard's LED renderer at 5 frames a second and
 **streams** it: each frame is its own single-frame push, sent one at a time about 200 ms apart, and
 the last one is always the new page. A flip has no half-flaps at this rate (one frame per step).
+Each side's canvases ride along: FiestaBoard's planner shows the old page's canvases for the first
+half of a per-cell transition (flip, cascade, dissolve) and the new page's for the second, and the
+last frame always has the new page's. A fade through black swaps in the new page with its
+canvases.
 
 **Fade** goes through black by default: the plugin dims the panel in five steps with
 `Channel/SetBrightness`, pushes the new page while the screen is dark, and brightens it back, in

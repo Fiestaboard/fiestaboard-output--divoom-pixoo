@@ -72,6 +72,7 @@ lookup to find the device.
 | Colour spans (`{red:HOT}`) | Letters in that colour |
 | Icons (`{icon:sun}`) | The icon's picture in the board's face |
 | Characters with no glyph | FiestaBoard's fallback for the board's set (`led_5x7` or `led_3x5`) |
+| Pixel canvases | Drawn over the text, pixel for pixel (FiestaBoard with canvas pages) |
 
 Page changes play the board's transition: flip by default, or another from the transition menu
 (slide, wipe, cascade, dissolve, fade) as FiestaBoard offers them for this display. The Pixoo
