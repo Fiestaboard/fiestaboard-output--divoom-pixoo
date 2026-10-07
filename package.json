@@ -1,6 +1,6 @@
 {
   "name": "@fiestaboard/output-divoom-pixoo",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Device data for the FiestaBoard Divoom Pixoo 64 output plugin (data only, no code).",
   "license": "MIT",
   "repository": {

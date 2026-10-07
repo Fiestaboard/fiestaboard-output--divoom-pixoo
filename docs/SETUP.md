@@ -4,8 +4,8 @@ Connect a Divoom Pixoo 64 on your local network so FiestaBoard shows your pages 
 
 ## Overview
 
-**What it does:** FiestaBoard draws each page on the Pixoo's 64 × 64 LED matrix as a 10-row ×
-16-column grid of characters, and animates each change of page with FiestaBoard's LED
+**What it does:** FiestaBoard draws each page on the Pixoo's 64 × 64 LED matrix as a grid of
+characters (8 rows × 10 columns at text size Large, 10 × 16 at Small), and animates each change of page with FiestaBoard's LED
 transitions. Everything stays on your
 network; no Divoom account or cloud service is involved, unless you choose the optional Divoom
 lookup to find the device.
@@ -49,11 +49,12 @@ lookup to find the device.
          }'
    ```
 
-   FiestaBoard answers with the new board, sized 10 rows × 16 columns.
+   FiestaBoard answers with the new board, sized 8 rows × 10 columns (text size Large). Add
+   `"font": "3x5"` to `output_config` for Small, 10 rows × 16 columns; see [Text size](#text-size).
 
-3. **Template** — Assign pages to the new board as you would for any board. Pages written for a
-   Vestaboard Note (3 × 15) fit as they are; anything wider than 16 characters or taller than 10
-   rows is cut off.
+3. **Template** — Assign pages to the new board as you would for any board. At Small, pages written for a
+   Vestaboard Note (3 × 15) fit as they are; anything wider than the board's columns (10 at Large,
+   16 at Small) or taller than its rows (8 or 10) is cut off.
 
 4. **View** — Send a page to the board. The Pixoo shows it in about half a second. The first page
    may take about a second, while the Pixoo switches away from its clock face. Page changes play
@@ -63,14 +64,14 @@ lookup to find the device.
 
 | Content | On the Pixoo |
 | --- | --- |
-| Grid | 10 rows × 16 columns |
-| Letters, digits, punctuation | White 3×5 pixel characters on black |
+| Grid | 8 rows × 10 columns (Large) or 10 rows × 16 columns (Small) |
+| Letters, digits, punctuation | White 5×7 (Large) or 3×5 (Small) pixel characters on black |
 | `{63}`–`{68}` | Solid red, orange, yellow, green, blue or violet cells |
 | `{69}` | Solid white cell |
 | `{70}`, `{71}` | Unlit (black) cells |
 | Colour spans (`{red:HOT}`) | Letters in that colour |
-| Icons (`{icon:sun}`) | The icon's 3×5 picture |
-| Characters with no 3×5 glyph | FiestaBoard's fallback for the `led_3x5` set |
+| Icons (`{icon:sun}`) | The icon's picture in the board's face |
+| Characters with no glyph | FiestaBoard's fallback for the board's set (`led_5x7` or `led_3x5`) |
 
 Page changes play the board's transition: flip by default, or another from the transition menu
 (slide, wipe, cascade, dissolve, fade) as FiestaBoard offers them for this display. The Pixoo
@@ -79,12 +80,26 @@ half-flaps of a faster panel; it takes two to three seconds. Fade dims the scree
 the page and brightens it again, unless you set **Fade style** to Blend. Choose None for an
 instant cut. FiestaBoard starts at most one update per second.
 
+### Text size
+
+**Text size** on the board screen picks the face the Pixoo draws in:
+
+- **Large** (5×7 pixels, 8 rows × 10 columns): the easiest to read across a room, and lowercase
+  reads well. New boards start here.
+- **Small** (3×5 pixels, 10 rows × 16 columns): fits more text, and pages written for a Vestaboard
+  Note fit. Best in uppercase: 3×5 lowercase `m`, `n`, `u` and `w` are hard to tell apart from a
+  distance.
+
+Changing it resizes the board, and FiestaBoard lays its pages out again on the new grid. A board
+made before version 0.5.0 keeps Small until you change it.
+
 ## Configuration Reference
 
 | Setting | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `host` | string | Yes | — | The Pixoo's IP address or hostname. A port is accepted (`192.168.1.50:80`); `http://` and any path are ignored. |
 | `brightness` | integer, 0–100 | No | the device's own | Screen brightness, applied after the first page lands. Leave it out to keep the brightness you set in the Divoom app. |
+| `font` | `"5x7"` or `"3x5"` | No | `"5x7"` | **Text size** on the board screen. Large (`"5x7"`) draws 5×7-pixel letters on 8 rows × 10 columns: the easiest to read across a room, and lowercase reads well. Small (`"3x5"`) draws 3×5-pixel letters on 10 rows × 16 columns: more text fits, best in uppercase. Changing it resizes the board and its pages. New boards start Large; a board made before 0.5.0 keeps Small. |
 | `tile_gap` | `"gap"` or `"fill"` | No | `"gap"` | **Tile style** on the board screen. Gaps keeps the one-pixel line between neighbouring color tiles; Seamless lights it when both are the same color, so a row of tiles reads as one solid bar. A corner pixel lights only when all four cells around it match. |
 | `block_padding` | `0` or `1` | No | `0` | **Block padding** on the board screen. 1 pixel grows the background of highlighted text (`{black/white:TEXT}`) one pixel on every side, so the letters never touch its edge. It never covers a neighbouring character, and a pixel between two different colors stays dark. |
 | `fade_style` | `"black"` or `"blend"` | No | `"black"` | **Fade style**: how the Fade transition looks. Through black dims the screen, swaps the page and brightens it again (about a second). Blend cross-fades the two pages in a few frames. |

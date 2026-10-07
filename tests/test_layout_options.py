@@ -76,6 +76,8 @@ def test_the_pixoo_model_allows_both_values_of_both_with_todays_defaults():
     assert model["layoutOptions"] == {
         "tileGap": {"allowed": ["gap", "fill"], "default": "gap"},
         "blockPadding": {"allowed": [0, 1], "default": 0},
+        # Text size (tests/test_text_size.py): new boards get the Large face.
+        "font": {"allowed": ["5x7", "3x5"], "default": "5x7"},
     }
 
 

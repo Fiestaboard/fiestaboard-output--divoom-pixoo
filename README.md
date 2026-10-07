@@ -22,20 +22,21 @@ black with the brightness command (see [How it works](#how-it-works)).
 | --- | --- |
 | Device model | `divoom_pixoo64` (from [`output/device-models.json`](./output/device-models.json)) |
 | Matrix | 64 × 64 pixels, 24-bit RGB |
-| Character grid | **10 rows × 16 columns** (3×5 font with 1-pixel gaps) |
-| Character set | `led_3x5`: A–Z, 0–9, board punctuation, colour tiles |
+| Character grid | **8 rows × 10 columns** at text size Large (5×7 font, the default for new boards) or **10 rows × 16 columns** at Small (3×5 font); 1-pixel gaps either way |
+| Character set | `led_5x7` (Large) or `led_3x5` (Small): A–Z, 0–9, board punctuation, colour tiles; Large also draws lowercase |
 | Connection | `POST http://<host>/post` on your LAN; no account, no cloud, no password |
 | Write spacing | At least 1 second between writes (enforced by FiestaBoard, not the plugin); 0.5 s verified safe |
 | Animation | `stream` at 5 frames a second: LED transitions are sent as paced single frames; flip is the default |
 | Read back | None: the device cannot report what it shows |
 
-A 10 × 16 grid is larger than the 3 × 15 minimum every FiestaBoard board must reach, so pages
-written for a Vestaboard Note fit. The smaller Pixoo 16 and Pixoo 32 cannot fit 3 × 15 and are not
-supported.
+At Small, the 10 × 16 grid is larger than the 3 × 15 Vestaboard Note, so pages written for a Note
+fit. At Large, the 8 × 10 grid is narrower: anything wider than 10 characters is cut off. The
+smaller Pixoo 16 and Pixoo 32 cannot fit 3 × 15 and are not supported.
 
 ## What it shows
 
-FiestaBoard lays out each page on the 10 × 16 grid and the plugin draws it:
+FiestaBoard lays out each page on the board's grid (8 × 10 at Large, 10 × 16 at Small) and the
+plugin draws it. At Small:
 
 - Letters, digits and punctuation in the 3×5 font, in white on black
 - Colour tiles `{63}`–`{68}` (red through violet) as solid cells in the board colours, `{69}` as
@@ -63,6 +64,7 @@ to the `led_3x5` character set), so colours and icons in a page reach the screen
 | --- | --- | --- | --- | --- |
 | `host` | string | Yes | — | The Pixoo's IP address or hostname, for example `192.168.1.50`. A port (`192.168.1.50:80`) is accepted; `http://` and any path are ignored. |
 | `brightness` | integer, 0–100 | No | the device's own | Screen brightness, set after the first frame lands. Leave it out to keep what you set in the Divoom app. |
+| `font` | `"5x7"` or `"3x5"` | No | `"5x7"` | **Text size** on the board screen. Large (`"5x7"`) draws 5×7-pixel letters on 8 rows × 10 columns: the easiest to read across a room, and lowercase reads well. Small (`"3x5"`) draws 3×5-pixel letters on 10 rows × 16 columns: more text fits, best in uppercase. Changing it resizes the board and its pages. New boards start Large; a board made before 0.5.0 keeps Small. |
 | `tile_gap` | `"gap"` or `"fill"` | No | `"gap"` | **Tile style** on the board screen. Gaps keeps the one-pixel line between neighbouring color tiles; Seamless lights it when both are the same color, so a row of tiles reads as one solid bar. A corner pixel lights only when all four cells around it match. |
 | `block_padding` | `0` or `1` | No | `0` | **Block padding** on the board screen. 1 pixel grows the background of highlighted text (`{black/white:TEXT}`) one pixel on every side, so the letters never touch its edge. It never covers a neighbouring character, and a pixel between two different colors stays dark. |
 | `fade_style` | `"black"` or `"blend"` | No | `"black"` | **Fade style**: how the Fade transition looks. Through black dims the screen to black, swaps the page and brightens it again (about a second, smooth). Blend cross-fades the two pages in a few frames. |
@@ -114,6 +116,7 @@ empty (or add your Pixoo's address) to search a real network.
 - Gives up a write as soon as a newer page arrives, between any two requests
 - Connection test that tells unreachable, timed-out, wrong-device and blocked-host cases apart
 - Optional brightness setting
+- **Text size** (Large 5×7 / Small 3×5): the board resizes to match, and its preview follows
 - **Tile style** (Gaps / Seamless) and **Block padding** (Off / 1 pixel) for crisper tile art and
   highlighted text; the board's preview draws the same pixels
 - Honours `FIESTABOARD_OUTPUTS_ALLOW_HOSTS`: a host outside the list is never contacted
@@ -209,7 +212,7 @@ timings are in the model's `animation.notes` in
 
 | File | Contents |
 | --- | --- |
-| [`output/device-models.json`](./output/device-models.json) | The `divoom_pixoo64` DeviceModel: 64×64 RGB pixels, `led_3x5` character set and 3×5 font (a 10-row × 16-column grid), the LED layout options a board may choose (`layoutOptions`), square-pixel appearance, and `stream` animation at 5 frames a second, with the hardware-lab evidence and sources |
+| [`output/device-models.json`](./output/device-models.json) | The `divoom_pixoo64` DeviceModel: 64×64 RGB pixels, `led_3x5` character set and 3×5 font (a 10-row × 16-column grid), the LED layout options a board may choose (`layoutOptions`: tile gap, block padding and text size, 5×7 or 3×5), square-pixel appearance, and `stream` animation at 5 frames a second, with the hardware-lab evidence and sources |
 
 The data is plain JSON validated against FiestaUI's DeviceModel JSON Schema. The plugin's manifest
 points at it (`"device_models": {"$ref": "output/device-models.json"}`), so FiestaBoard, FiestaUI
@@ -222,14 +225,20 @@ The model started as FiestaUI's `divoom_pixoo64` from the LED-matrix work (commi
 rewritten from the 2026-10-04 hardware lab: `stream` at `maxFps` 2, with the lab's evidence in
 `notes` and `sources`. Version 0.4.0 raises `maxFps` to 5 from the 2026-10-05 lab, which measured
 single-frame streaming and played every transition on the panel. Version 0.3.0 added `layoutOptions` from FiestaUI PR #338: both tile gaps
-and both block paddings allowed, with today's look (`"gap"`, `0`) the default. FiestaUI mirrors
-this model field for field in its built-in. Every other field is unchanged. The file validates against FiestaUI's DeviceModel JSON Schema as vendored in
-FiestaBoard.
+and both block paddings allowed, with today's look (`"gap"`, `0`) the default. Version 0.5.0 adds
+`layoutOptions.font` from FiestaUI PR #342: a board chooses the 5×7 face (8 × 10) or the 3×5 face
+(10 × 16), and new boards get 5×7. A camera test on a Pixoo 64 (2026-10-06) found 3×5 lowercase
+`m`, `n`, `u` and `w` illegible across a room and 5×7 far more readable. The model's own `font` and
+`charset` stay 3×5: the face a board draws in when it has not chosen, so existing boards keep their
+10 × 16 grid. FiestaUI mirrors this model field for field in its built-in (its `animation` block
+excepted). Every other field is unchanged. The file validates against FiestaUI's DeviceModel JSON
+Schema as vendored in FiestaBoard; from 0.5.0 that is the schema of FiestaUI 8.1.0 or later
+(FiestaBoard PR #2224), because an earlier schema rejects `layoutOptions.font`.
 
 | File | sha256 |
 | --- | --- |
-| `output/device-models.json` | `81305c2a0104699b4b0052c4e3e01b1c6274bdaa79cf8cb5933596da699540f6` |
-| `device-model.schema.json` | `903597ae530303b276995a0c01051e25a11bc5facd272d6e52931102bb1e2a61` |
+| `output/device-models.json` | `c555ec1c0f6c93a7fbc24dd4f971b777b3eefcc2921c927ff626c1ec17f74b4d` |
+| `device-model.schema.json` | `1142b53cb1dbf32f0799cfde5ccbbf6a9f1b82ae10c6c2bf0298692a8ab00388` |
 | `character-set.schema.json` | `69efe686fc58060361d279be453b12f44395fa1a879dcac7c82ce559628437b3` |
 
 Preview cosmetics (square pixels at 0.82 of the pitch, off-LED and substrate colours) live in the

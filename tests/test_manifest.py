@@ -10,8 +10,10 @@ from .conftest import _ERRORS, MANIFEST, PLUGIN_DIR
 #: output/device-models.json: the divoom_pixoo64 model as revised by the 2026-10-04 and
 #: 2026-10-05 hardware labs (README "Provenance": streamed at maxFps 5), plus FiestaUI
 #: #338's layoutOptions (both tile gaps and both block paddings allowed, today's look the
-#: default). Changing it is a deliberate edit that FiestaUI mirrors.
-DEVICE_MODELS_SHA256 = "81305c2a0104699b4b0052c4e3e01b1c6274bdaa79cf8cb5933596da699540f6"
+#: default), plus FiestaUI #342's text size (layoutOptions.font: 5x7 or 3x5, 5x7 for new
+#: boards; the model's own font stays 3x5). Changing it is a deliberate edit that FiestaUI
+#: mirrors.
+DEVICE_MODELS_SHA256 = "c555ec1c0f6c93a7fbc24dd4f971b777b3eefcc2921c927ff626c1ec17f74b4d"
 
 
 def test_the_manifest_loads_as_an_output_plugin():
@@ -34,7 +36,7 @@ def test_the_capabilities_come_from_the_pixoo_model():
 
 def test_no_board_setting_is_secret():
     props = MANIFEST.output.settings_schema["properties"]
-    assert set(props) == {"host", "brightness", "tile_gap", "block_padding", "fade_style", "mac"}
+    assert set(props) == {"host", "brightness", "font", "tile_gap", "block_padding", "fade_style", "mac"}
     assert not any(p.get("secret") or p.get("ui:widget") == "password" for p in props.values())
 
 
@@ -67,8 +69,8 @@ def test_the_mac_setting_is_optional_and_filled_by_the_cloud_lookup():
     assert {name: spec.fills for name, spec in cloud.result_fields.items()} == {"host": "host", "mac": "mac"}
 
 
-def test_the_version_is_bumped_for_streamed_transitions():
-    assert MANIFEST.version == "0.4.0"
+def test_the_version_is_bumped_for_text_size():
+    assert MANIFEST.version == "0.5.0"
 
 
 def test_fade_style_defaults_to_through_black():
