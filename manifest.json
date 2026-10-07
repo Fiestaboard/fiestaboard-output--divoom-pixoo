@@ -1,7 +1,7 @@
 {
   "id": "divoom_pixoo",
   "name": "Divoom Pixoo 64",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Show your FiestaBoard pages on a Divoom Pixoo 64 LED matrix over your local network.",
   "author": "FiestaBoard Team",
   "repository": "https://github.com/Fiestaboard/fiestaboard-output--divoom-pixoo",
@@ -46,6 +46,20 @@
           "description": "Screen brightness from 0 to 100. Leave empty to keep the device's own setting.",
           "minimum": 0,
           "maximum": 100
+        },
+        "font": {
+          "type": "string",
+          "title": "Text size",
+          "description": "Large draws 5×7-pixel letters on 8 rows × 10 columns: the easiest to read across a room, and lowercase reads well. Small draws 3×5-pixel letters on 10 rows × 16 columns: more text fits, best in uppercase. Changing it resizes the board and the pages shown on it.",
+          "enum": [
+            "5x7",
+            "3x5"
+          ],
+          "enumNames": [
+            "Large",
+            "Small"
+          ],
+          "default": "5x7"
         },
         "tile_gap": {
           "type": "string",
