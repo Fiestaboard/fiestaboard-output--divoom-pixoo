@@ -6,11 +6,12 @@ never runs it. It does exactly two things, then stops:
 1. shows ``HELLO`` / ``FIESTA`` as a still frame (``write_cells``);
 2. waits (5 s by default), then changes to ``FIESTA`` / ``BOARD`` through
    ``write_transition`` with the transition FiestaBoard resolves for the
-   Pixoo model (``none`` since the 2026-10-04 lab: one more still push).
+   Pixoo model (flip, streamed as paced single-frame pushes), or the one
+   ``--transition`` names.
 
 It prints each HTTP request — the command, its PicID / PicNum / PicOffset,
 how long it took, the HTTP status and the device's reply (never the pixel
-data) — and the PicIDs used. It never loops or pushes rapidly: it is not a
+data) — and the PicIDs used. It runs one transition and stops: it is not a
 stress or freeze test.
 
 Run it from the repository root against a FiestaBoard core checkout that has
@@ -92,13 +93,11 @@ def build(plugin_cls: type, host: str) -> Any:
     return plugin
 
 
-def run(host: str, *, pause_s: float = 5.0, ready_s: float | None = None, out=sys.stdout) -> dict[str, Any]:
+def run(host: str, *, pause_s: float = 5.0, transition: str | None = None, out=sys.stdout) -> dict[str, Any]:
     """The two operations against *host*; the report as a dict (also printed)."""
     from src.plugins import CancelToken, cells_from_codes, resolve_led_transition, text_to_board_array
 
     plugin = build(load_plugin_class(), host)
-    if ready_s is not None:
-        plugin.ANIMATION_READY_S = ready_s
     started = time.monotonic()
     recorder = Recorder(started)
     plugin.http.use_transport(recorder)
@@ -109,11 +108,13 @@ def run(host: str, *, pause_s: float = 5.0, ready_s: float | None = None, out=sy
     steps = []
     t = time.monotonic()
     result = plugin.write_cells(first, native=None, cancel=CancelToken())
-    steps.append({"step": "still HELLO/FIESTA (write_cells)", "s": round(time.monotonic() - t, 3), "result": result._asdict()})
+    steps.append(
+        {"step": "still HELLO/FIESTA (write_cells)", "s": round(time.monotonic() - t, 3), "result": result._asdict()}
+    )
 
     time.sleep(pause_s)
 
-    transition = resolve_led_transition(None, plugin.device_model)
+    transition = resolve_led_transition(transition, plugin.device_model)
     t = time.monotonic()
     result = plugin.write_transition(first, second, transition, cancel=CancelToken())
     steps.append(
@@ -132,7 +133,6 @@ def run(host: str, *, pause_s: float = 5.0, ready_s: float | None = None, out=sy
         "calls": recorder.calls,
         "pic_ids": [c["PicID"] for c in recorder.calls if "PicID" in c],
         "constants": {
-            "ANIMATION_READY_S": plugin.ANIMATION_READY_S,
             "RESET_AFTER_PUSHES": plugin.RESET_AFTER_PUSHES,
         },
     }
@@ -156,9 +156,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--host", required=True, help="the Pixoo's address, for example 192.168.1.50")
     parser.add_argument("--pause", type=float, default=5.0, help="seconds between the still frame and the transition")
+    parser.add_argument("--transition", help="the transition to try (flip, slide, wipe, ...); default: the model's")
     parser.add_argument("--json", type=Path, help="also write the report as JSON to this file")
     args = parser.parse_args(argv)
-    report = run(args.host, pause_s=args.pause)
+    report = run(args.host, pause_s=args.pause, transition=args.transition)
     if args.json:
         args.json.write_text(json.dumps(report, indent=2))
     ok = all(step["result"]["success"] for step in report["steps"])

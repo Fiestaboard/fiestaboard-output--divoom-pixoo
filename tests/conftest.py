@@ -42,7 +42,9 @@ def build(config: dict, *, fast: bool = True) -> DivoomPixoo:
     if MANIFEST is not None and MANIFEST.output is not None:
         plugin.bind_manifest(MANIFEST.output)
     if fast:
-        plugin.ANIMATION_READY_S = 0.0
+        plugin.STREAM_STEP_S = 0.0
+        plugin.FADE_STEP_S = 0.0
+        plugin.FADE_SWAP_S = 0.0
         plugin.CONNECT_TIMEOUT_S = 0.5
         plugin.READ_TIMEOUT_S = 0.5
     plugin.open()

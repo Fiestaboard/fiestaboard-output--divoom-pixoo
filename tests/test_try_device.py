@@ -21,19 +21,26 @@ def tool():
 
 def test_it_shows_a_still_then_one_transition_and_times_every_request(tool, pixoo):
     out = io.StringIO()
-    report = tool.run(pixoo.host, pause_s=0, ready_s=0, out=out)
+    report = tool.run(pixoo.host, pause_s=0, out=out)
 
     commands = [c["command"] for c in report["calls"]]
-    # Exactly: reset + seed + still, then the change, which the Pixoo snaps: one more still.
-    assert commands == ["Draw/ResetHttpGifId", "Draw/GetHttpGifId", "Draw/SendHttpGif", "Draw/SendHttpGif"]
+    # Reset + seed + still, then the change: the model's flip, streamed as single-frame pushes.
+    assert commands[:3] == ["Draw/ResetHttpGifId", "Draw/GetHttpGifId", "Draw/SendHttpGif"]
+    assert len(commands) > 4 and set(commands[3:]) == {"Draw/SendHttpGif"}
     assert commands == [c.get("Command") for c in pixoo.commands]
     assert all(c["status"] == 200 and c["ms"] >= 0 and "PicData" not in c for c in report["calls"])
-    assert report["pic_ids"] == [1, 2]
+    assert report["pic_ids"] == list(range(1, len(commands) - 1))
     assert [s["result"]["success"] for s in report["steps"]] == [True, True]
-    assert report["steps"][1]["transition"]["id"] == "none"
+    assert report["steps"][1]["transition"]["id"] == "flip"
 
     text = out.getvalue()
     assert "Draw/SendHttpGif" in text and "PicIDs:" in text and "PicData" not in text
+
+
+def test_a_named_transition_is_the_one_tried(tool, pixoo):
+    report = tool.run(pixoo.host, pause_s=0, transition="none", out=io.StringIO())
+    assert report["steps"][1]["transition"]["id"] == "none"
+    assert [c["command"] for c in report["calls"]].count("Draw/SendHttpGif") == 2
 
 
 def test_the_first_message_is_hello_fiesta(tool, pixoo):
@@ -41,7 +48,7 @@ def test_the_first_message_is_hello_fiesta(tool, pixoo):
 
     from .conftest import build, render
 
-    tool.run(pixoo.host, pause_s=0, ready_s=0, out=io.StringIO())
+    tool.run(pixoo.host, pause_s=0, out=io.StringIO())
     rows, cols = build({"host": "192.0.2.10"}).board_geometry
     expected = render(cells_from_codes(text_to_board_array("HELLO\nFIESTA", rows, cols)))
     import base64
@@ -51,23 +58,25 @@ def test_the_first_message_is_hello_fiesta(tool, pixoo):
 
 def test_a_failing_device_is_reported_with_its_errors(tool, pixoo):
     pixoo.mode = "http_500"
-    report = tool.run(pixoo.host, pause_s=0, ready_s=0, out=io.StringIO())
+    report = tool.run(pixoo.host, pause_s=0, out=io.StringIO())
     assert [s["result"]["success"] for s in report["steps"]] == [False, False]
     assert {c["status"] for c in report["calls"]} == {500}
 
 
 def test_an_unreachable_device_records_the_error(tool):
-    report = tool.run("127.0.0.1:9", pause_s=0, ready_s=0, out=io.StringIO())
+    report = tool.run("127.0.0.1:9", pause_s=0, out=io.StringIO())
     assert report["calls"] and all("error" in c for c in report["calls"])
     assert "error" in json.dumps(report)
 
 
 def test_main_writes_json_and_exits_by_outcome(tool, pixoo, tmp_path, monkeypatch):
     target = tmp_path / "report.json"
-    monkeypatch.setattr(tool, "run", lambda host, pause_s: {"steps": [{"result": {"success": True}}], "host": host})
+    monkeypatch.setattr(
+        tool, "run", lambda host, pause_s, transition: {"steps": [{"result": {"success": True}}], "host": host}
+    )
     assert tool.main(["--host", pixoo.host, "--pause", "0", "--json", str(target)]) == 0
     assert json.loads(target.read_text())["host"] == pixoo.host
-    monkeypatch.setattr(tool, "run", lambda host, pause_s: {"steps": [{"result": {"success": False}}]})
+    monkeypatch.setattr(tool, "run", lambda host, pause_s, transition: {"steps": [{"result": {"success": False}}]})
     assert tool.main(["--host", pixoo.host]) == 1
 
 

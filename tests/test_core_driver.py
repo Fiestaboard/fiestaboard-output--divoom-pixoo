@@ -30,7 +30,7 @@ def test_core_keeps_the_one_second_floor_between_writes(pixoo, make_plugin):
     now[0] += 0.6
     third = driver.write_sequence([TimedFrame(frame(1), 100), TimedFrame(frame(3), 100)])
     assert (third.success, third.was_sent) == (True, True)
-    assert pixoo.pushes()[-1]["PicNum"] == 1  # the still target after the animation
+    assert pixoo.pushes()[-1]["PicNum"] == 1  # every streamed frame is a single-frame push
 
 
 def test_a_dead_device_is_a_failed_write_core_can_report(pixoo, make_plugin):
@@ -41,7 +41,7 @@ def test_a_dead_device_is_a_failed_write_core_can_report(pixoo, make_plugin):
     assert driver.last_write_error
 
 
-def test_core_snaps_a_page_change_to_one_still_push(pixoo, make_plugin):
+def test_core_streams_a_page_change_through_the_models_flip(pixoo, make_plugin):
     now = [20_000.0]
     driver = OutputPluginDriver(make_plugin(), clock=lambda: now[0])
     assert driver.takes_transitions
@@ -52,5 +52,6 @@ def test_core_snaps_a_page_change_to_one_still_push(pixoo, make_plugin):
     result = driver.render(frame(2), with_outcome=True)
 
     assert (result.success, result.was_sent) == (True, True)
-    # The Pixoo model resolves no LED transition: one single-frame push, no GIF.
-    assert [c["PicNum"] for c in pixoo.pushes()] == [1]
+    # The Pixoo model resolves a coarse flip: single-frame pushes, never a GIF.
+    pushes = pixoo.pushes()
+    assert len(pushes) > 1 and {c["PicNum"] for c in pushes} == {1}

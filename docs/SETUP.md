@@ -5,7 +5,8 @@ Connect a Divoom Pixoo 64 on your local network so FiestaBoard shows your pages 
 ## Overview
 
 **What it does:** FiestaBoard draws each page on the Pixoo's 64 × 64 LED matrix as a 10-row ×
-16-column grid of characters, and cuts straight to each new page. Everything stays on your
+16-column grid of characters, and animates each change of page with FiestaBoard's LED
+transitions. Everything stays on your
 network; no Divoom account or cloud service is involved, unless you choose the optional Divoom
 lookup to find the device.
 
@@ -55,8 +56,8 @@ lookup to find the device.
    rows is cut off.
 
 4. **View** — Send a page to the board. The Pixoo shows it in about half a second. The first page
-   may take about a second, while the Pixoo switches away from its clock face. Page changes cut
-   straight to the new page, with no animation and no loading screen.
+   may take about a second, while the Pixoo switches away from its clock face. Page changes play
+   the board's transition (a flip by default), then settle on the new page.
 
 ## What it shows
 
@@ -71,9 +72,12 @@ lookup to find the device.
 | Icons (`{icon:sun}`) | The icon's 3×5 picture |
 | Characters with no 3×5 glyph | FiestaBoard's fallback for the `led_3x5` set |
 
-Page changes cut straight to the new page, and so does the preview. The Pixoo loops every uploaded
-animation and shows a loading screen for longer ones, so FiestaBoard does not animate it.
-FiestaBoard sends at most one update per second. FiestaBoard sends at most one update per second to the Pixoo.
+Page changes play the board's transition: flip by default, or another from the transition menu
+(slide, wipe, cascade, dissolve, fade) as FiestaBoard offers them for this display. The Pixoo
+shows about five frames a second, so a flip is a quick, stepped scramble rather than the smooth
+half-flaps of a faster panel; it takes two to three seconds. Fade dims the screen to black, swaps
+the page and brightens it again, unless you set **Fade style** to Blend. Choose None for an
+instant cut. FiestaBoard starts at most one update per second.
 
 ## Configuration Reference
 
@@ -83,6 +87,7 @@ FiestaBoard sends at most one update per second. FiestaBoard sends at most one u
 | `brightness` | integer, 0–100 | No | the device's own | Screen brightness, applied after the first page lands. Leave it out to keep the brightness you set in the Divoom app. |
 | `tile_gap` | `"gap"` or `"fill"` | No | `"gap"` | **Tile style** on the board screen. Gaps keeps the one-pixel line between neighbouring color tiles; Seamless lights it when both are the same color, so a row of tiles reads as one solid bar. A corner pixel lights only when all four cells around it match. |
 | `block_padding` | `0` or `1` | No | `0` | **Block padding** on the board screen. 1 pixel grows the background of highlighted text (`{black/white:TEXT}`) one pixel on every side, so the letters never touch its edge. It never covers a neighbouring character, and a pixel between two different colors stays dark. |
+| `fade_style` | `"black"` or `"blend"` | No | `"black"` | **Fade style**: how the Fade transition looks. Through black dims the screen, swaps the page and brightens it again (about a second). Blend cross-fades the two pages in a few frames. |
 | `mac` | string, 12 hex digits | No | — | The Pixoo's MAC address, filled in by the Divoom cloud lookup. With it saved, the lookup finds this Pixoo again after its IP address changes. |
 
 **Environment variables**
@@ -150,3 +155,9 @@ no authentication.
 
 - Brightness is applied after the first page lands. If the device rejected it, the plugin tries
   again after the next page.
+
+**The screen stays dim after a fade**
+
+- A fade through black always sets the brightness back, even when a newer page interrupts it. If
+  the Pixoo stopped answering mid-fade, the next page sets your `brightness` again; without a
+  `brightness` setting, set it in the Divoom app or add one here.
