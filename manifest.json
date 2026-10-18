@@ -1,7 +1,7 @@
 {
   "id": "divoom_pixoo",
   "name": "Divoom Pixoo 64",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Show your FiestaBoard pages on a Divoom Pixoo 64 LED matrix over your local network.",
   "author": "FiestaBoard Team",
   "repository": "https://github.com/Fiestaboard/fiestaboard-output--divoom-pixoo",

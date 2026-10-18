@@ -114,6 +114,9 @@ empty (or add your Pixoo's address) to search a real network.
 - Keeps the device's picture ids increasing, so no update is silently ignored, and resets them
   every 32 pushes
 - Gives up a write as soon as a newer page arrives, between any two requests
+- Puts the page back after the Pixoo restarts (the restart resets its picture ids, which the
+  plugin checks between writes), and re-finds a Pixoo that moved to a new address by its saved
+  MAC
 - Connection test that tells unreachable, timed-out, wrong-device and blocked-host cases apart
 - Optional brightness setting
 - **Text size** (Large 5×7 / Small 3×5): the board resizes to match, and its preview follows

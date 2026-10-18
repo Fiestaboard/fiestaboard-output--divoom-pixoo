@@ -151,9 +151,18 @@ no authentication.
 
 **The Pixoo moved to a new address**
 
-- If the board has a saved MAC address, click **Ask Divoom's servers which Pixoos are on your
-  network**: it finds that Pixoo again and fills in its new address. Otherwise use **Find my
-  Pixoo**.
+- If the board has a saved MAC address, FiestaBoard finds the Pixoo again by itself within a minute or
+  two of it going quiet: it asks Divoom's cloud where that MAC address is now and saves the
+  new address. The cloud lookup button fills in the MAC address.
+- To find it straight away, click **Ask Divoom's servers which Pixoos are on your network**.
+  Without a saved MAC address, use **Find my Pixoo**.
+- Reserving a fixed address for the Pixoo in your router stops it moving at all.
+
+**The Pixoo shows its own clock after a restart**
+
+- Unplugging or restarting the Pixoo clears FiestaBoard's picture. FiestaBoard notices the
+  restart within about half a minute and sends the page again. Needs a FiestaBoard with the
+  device poll (`next` from October 2026); older versions wait until the page changes.
 
 **The Pixoo stopped updating after a while**
 
