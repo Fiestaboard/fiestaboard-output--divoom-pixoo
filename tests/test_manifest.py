@@ -69,8 +69,8 @@ def test_the_mac_setting_is_optional_and_filled_by_the_cloud_lookup():
     assert {name: spec.fills for name, spec in cloud.result_fields.items()} == {"host": "host", "mac": "mac"}
 
 
-def test_the_version_is_bumped_for_text_size():
-    assert MANIFEST.version == "0.5.0"
+def test_the_version_is_bumped_for_the_device_poll():
+    assert MANIFEST.version == "0.5.1"
 
 
 def test_fade_style_defaults_to_through_black():

@@ -93,6 +93,11 @@ from src.plugins import (
     transition_frames,
 )
 
+try:
+    from src.plugins import DevicePoll
+except ImportError:  # a core before the poll_device hook never polls: nothing to report
+    DevicePoll = None  # type: ignore[assignment,misc]
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["DivoomPixoo", "PixooError", "candidate_subnets", "is_pixoo_reply", "sweep"]
@@ -132,6 +137,11 @@ FADE_STEP_S = 0.09
 #: brightness change is immediate: brightening at once lit the OLD page
 #: again for a moment (camera-checked).
 FADE_SWAP_S = 0.45
+
+#: The least time between two Divoom cloud lookups for a Pixoo that stopped
+#: answering at its saved address (core polls every ~30 s; the cloud need not
+#: hear from us that often while the device is simply unplugged).
+REFIND_INTERVAL_S = 120.0
 
 #: ``(connect, read)`` timeouts for one command.
 CONNECT_TIMEOUT_S = 3.0
@@ -380,6 +390,7 @@ class DivoomPixoo(OutputPluginBase):
     STREAM_STEP_S: float | None = None
     CONNECT_TIMEOUT_S = CONNECT_TIMEOUT_S
     READ_TIMEOUT_S = READ_TIMEOUT_S
+    REFIND_INTERVAL_S = REFIND_INTERVAL_S
 
     def __init__(self, board_id: str | None, config: dict[str, Any]) -> None:
         super().__init__(board_id, config)
@@ -392,6 +403,11 @@ class DivoomPixoo(OutputPluginBase):
         self._brightness: int | None = None if brightness is None else max(0, min(100, int(brightness)))
         self._brightness_pending = self._brightness is not None
         self._renderer: tuple[Any, LedLayoutOptions] | None = None
+        #: An upload failed and nothing has landed since: the next poll that
+        #: hears the device report it back (see :meth:`poll_device`).
+        self._upload_failed = False
+        #: ``time.monotonic()`` before which no cloud lookup is made again.
+        self._next_refind_at = 0.0
 
     # --- identity --------------------------------------------------------------------------
 
@@ -546,10 +562,12 @@ class DivoomPixoo(OutputPluginBase):
             landed = self._upload(frames, speeds, cancel)
         except Exception as exc:
             logger.warning("Pixoo %s: upload failed: %s", self.host or "(no address)", exc)
+            self._upload_failed = True
             return WriteResult(False, False)
         if landed is None:
             # Preempted by a newer frame: not a device failure.
             return WriteResult(True, False)
+        self._upload_failed = False
         return None
 
     def _still(self, pixels: bytes, cancel: CancelToken) -> WriteResult:
@@ -763,22 +781,15 @@ class DivoomPixoo(OutputPluginBase):
         """
         failed = "Divoom's servers did not return any Pixoo."
         try:
-            response = self.http.post(DIVOOM_LAN_LOOKUP_URL, json={})
-            body = response.json() if response.status_code == 200 else None
+            devices = self._cloud_devices()
         except OutputHostBlocked:
             return ActionOutcome(
                 status="error", message="Not contacted: Divoom's servers are not allowed.", guidance=tuple(_fence_guidance())
             )
         except (requests.RequestException, ValueError):
             return ActionOutcome(status="error", message="Could not reach Divoom's servers.")
-        if not isinstance(body, dict) or body.get("ReturnCode") != 0:
+        if devices is None:
             return ActionOutcome(status="error", message=failed)
-        devices = []
-        for entry in body.get("DeviceList") or []:
-            if not isinstance(entry, dict) or not entry.get("DevicePrivateIP"):
-                continue
-            ip, name = str(entry["DevicePrivateIP"]), str(entry.get("DeviceName") or "Pixoo")
-            devices.append({**_device(ip, 80, name, f"{name} ({ip})"), "mac": normalise_mac(entry.get("DeviceMac"))})
         if not devices:
             return ActionOutcome(status="warning", message=failed, devices=())
 
@@ -801,6 +812,26 @@ class DivoomPixoo(OutputPluginBase):
             message=f"Divoom's servers listed {len(devices)} Pixoo(s).", fields=fields, devices=tuple(devices)
         )
 
+    def _cloud_devices(self) -> list[dict[str, Any]] | None:
+        """The Pixoos Divoom's cloud lists on this network's public address, each
+        with ``host``, ``name`` and ``mac``; ``None`` when the reply is not a list.
+
+        Raises:
+            OutputHostBlocked: Divoom's servers are not allowed.
+            requests.RequestException / ValueError: no answer, or not JSON.
+        """
+        response = self.http.post(DIVOOM_LAN_LOOKUP_URL, json={})
+        body = response.json() if response.status_code == 200 else None
+        if not isinstance(body, dict) or body.get("ReturnCode") != 0:
+            return None
+        devices = []
+        for entry in body.get("DeviceList") or []:
+            if not isinstance(entry, dict) or not entry.get("DevicePrivateIP"):
+                continue
+            ip, name = str(entry["DevicePrivateIP"]), str(entry.get("DeviceName") or "Pixoo")
+            devices.append({**_device(ip, 80, name, f"{name} ({ip})"), "mac": normalise_mac(entry.get("DeviceMac"))})
+        return devices
+
     @staticmethod
     def _fills(found: dict[str, Any]) -> dict[str, ActionField]:
         fields = {"host": ActionField(found["host"])}
@@ -809,6 +840,84 @@ class DivoomPixoo(OutputPluginBase):
         return fields
 
     # --- probes -----------------------------------------------------------------------------
+
+    def poll_device(self) -> Any:
+        """Core's between-writes look at the device (core's ``poll_device`` hook).
+
+        The Pixoo cannot say what it shows, but it can say it restarted: a
+        reboot wipes FiestaBoard's image back to the device's own clock face
+        AND resets its picture-id counter (``Draw/GetHttpGifId`` answered 1 on
+        the bench straight after a power-cycle). Reported as a restart, so
+        core re-sends the board's content even though the page has not
+        changed, when:
+
+        - the device's next id is below the one this instance would upload
+          next: it forgot every id since our last upload;
+        - it answers again after an upload failed: whatever it shows now,
+          core's last frame never reached it.
+
+        When the saved address does not answer and a ``mac`` is saved (the
+        Divoom cloud lookup fills it in), the Pixoo may have come back on a
+        new DHCP address: Divoom's cloud is asked where that MAC is (at most
+        every :data:`REFIND_INTERVAL_S`), and a Pixoo answering there becomes
+        this board's ``host`` — reported for core to save.
+        """
+        if DevicePoll is None or not self.host:
+            return None
+        try:
+            reply = self._post({"Command": GET_GIF_ID}, setup=True)
+        except OutputHostBlocked:
+            return None
+        except requests.RequestException:
+            return self._refind()
+        except Exception:
+            return None
+        device_next = reply.get("PicId")
+        forgot = (
+            isinstance(device_next, int)
+            and not isinstance(device_next, bool)
+            and self._next_pic_id is not None
+            and device_next < self._next_pic_id
+        )
+        if not (forgot or self._upload_failed):
+            return None
+        logger.info(
+            "Pixoo %s: %s; asking for the board's content again",
+            self.host,
+            "restarted (its picture ids were reset)" if forgot else "answering again after a failed upload",
+        )
+        self._restart_session()
+        return DevicePoll(restarted=True)
+
+    def _refind(self) -> Any:
+        """Find this board's Pixoo by its saved MAC after its address stopped answering."""
+        mac = normalise_mac(self.config.get("mac"))
+        if mac is None or time.monotonic() < self._next_refind_at:
+            return None
+        self._next_refind_at = time.monotonic() + self.REFIND_INTERVAL_S
+        try:
+            devices = self._cloud_devices() or []
+        except (requests.RequestException, ValueError):
+            return None
+        match = next((d for d in devices if d["mac"] == mac), None)
+        if match is None or match["host"] == self.host:
+            return None
+        old, self.host = self.host, match["host"]
+        try:
+            self._post({"Command": GET_GIF_ID}, setup=True)
+        except Exception:
+            self.host = old
+            return None
+        logger.info("Pixoo %s: not answering; found it by its MAC at %s", old, self.host)
+        self.config["host"] = self.host
+        self._restart_session()
+        return DevicePoll(restarted=True, config={"host": self.host})
+
+    def _restart_session(self) -> None:
+        """Start over as if new: re-seed picture ids, re-apply brightness."""
+        self._next_pic_id = None
+        self._upload_failed = False
+        self._brightness_pending = self._brightness is not None
 
     def check_connection(self) -> ConnectionCheck:
         where = self.host or "the Pixoo"
