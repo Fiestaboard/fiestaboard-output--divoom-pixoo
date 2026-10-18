@@ -496,6 +496,26 @@ class DivoomPixoo(OutputPluginBase):
         self._pushes_since_reset = 0
         return True
 
+    def _orient_pixels(self, pixels: bytes) -> bytes:
+        """Correct mounting clockwise at upload; logical layouts stay upright."""
+        angle = self.config.get("orientation", 0)
+        if angle == 0:
+            return pixels
+        oriented = bytearray(len(pixels))
+        edge = PIC_WIDTH - 1
+        for y in range(PIC_WIDTH):
+            for x in range(PIC_WIDTH):
+                if angle == 90:
+                    target_x, target_y = edge - y, x
+                elif angle == 180:
+                    target_x, target_y = edge - x, edge - y
+                else:  # 270; the board settings schema restricts the choices.
+                    target_x, target_y = y, edge - x
+                source = (y * PIC_WIDTH + x) * 3
+                target = (target_y * PIC_WIDTH + target_x) * 3
+                oriented[target : target + 3] = pixels[source : source + 3]
+        return bytes(oriented)
+
     def _upload(self, frames: list[bytes], speeds: list[int], cancel: CancelToken) -> bool | None:
         """Upload *frames* as one GIF, back-to-back, frame *i* shown ``speeds[i]`` ms.
 
@@ -529,7 +549,7 @@ class DivoomPixoo(OutputPluginBase):
                         "PicOffset": offset,
                         "PicID": pic_id,
                         "PicSpeed": speed,
-                        "PicData": base64.b64encode(pixels).decode("ascii"),
+                        "PicData": base64.b64encode(self._orient_pixels(pixels)).decode("ascii"),
                     }
                 )
                 self._pushes_since_reset += 1

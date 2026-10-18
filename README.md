@@ -118,6 +118,9 @@ empty (or add your Pixoo's address) to search a real network.
   plugin checks between writes), and re-finds a Pixoo that moved to a new address by its saved
   MAC
 - Connection test that tells unreachable, timed-out, wrong-device and blocked-host cases apart
+- **Orientation**: rotate the output image 0°, 90°, 180° or 270° clockwise to correct
+  mounting, including every animation frame. Default 0° keeps existing boards unchanged;
+  the preview remains upright and the 64 × 64 image and page dimensions stay the same.
 - Optional brightness setting
 - **Text size** (Large 5×7 / Small 3×5): the board resizes to match, and its preview follows
 - **Pixel canvases**: a page's canvases (pictures and pixel drawings) are drawn over its text, in
