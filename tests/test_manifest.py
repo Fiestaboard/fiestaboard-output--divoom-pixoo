@@ -36,7 +36,7 @@ def test_the_capabilities_come_from_the_pixoo_model():
 
 def test_no_board_setting_is_secret():
     props = MANIFEST.output.settings_schema["properties"]
-    assert set(props) == {"host", "brightness", "font", "tile_gap", "block_padding", "fade_style", "mac"}
+    assert set(props) == {"host", "brightness", "font", "tile_gap", "block_padding", "fade_style", "mac", "orientation"}
     assert not any(p.get("secret") or p.get("ui:widget") == "password" for p in props.values())
 
 
@@ -69,8 +69,8 @@ def test_the_mac_setting_is_optional_and_filled_by_the_cloud_lookup():
     assert {name: spec.fills for name, spec in cloud.result_fields.items()} == {"host": "host", "mac": "mac"}
 
 
-def test_the_version_is_bumped_for_the_device_poll():
-    assert MANIFEST.version == "0.5.1"
+def test_the_version_is_bumped_for_mounting_orientation():
+    assert MANIFEST.version == "0.6.0"
 
 
 def test_fade_style_defaults_to_through_black():

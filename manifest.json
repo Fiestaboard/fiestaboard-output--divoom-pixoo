@@ -1,7 +1,7 @@
 {
   "id": "divoom_pixoo",
   "name": "Divoom Pixoo 64",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Show your FiestaBoard pages on a Divoom Pixoo 64 LED matrix over your local network.",
   "author": "FiestaBoard Team",
   "repository": "https://github.com/Fiestaboard/fiestaboard-output--divoom-pixoo",
@@ -39,6 +39,14 @@
             "value_key": "host",
             "label_key": "label"
           }
+        },
+        "orientation": {
+          "type": "integer",
+          "title": "Orientation",
+          "description": "Rotate the output image clockwise to correct the Pixoo's mounting. Preview and page dimensions stay upright and unchanged.",
+          "enum": [0, 90, 180, 270],
+          "enumNames": ["0° (upright)", "90° clockwise", "180°", "270° clockwise"],
+          "default": 0
         },
         "brightness": {
           "type": "integer",

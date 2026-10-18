@@ -94,11 +94,22 @@ instant cut. FiestaBoard starts at most one update per second.
 Changing it resizes the board, and FiestaBoard lays its pages out again on the new grid. A board
 made before version 0.5.0 keeps Small until you change it.
 
+### Mounting orientation
+
+Set **Orientation** in the board settings to rotate the output image clockwise by 0°, 90°,
+180° or 270°. For example, a Pixoo mounted 90° clockwise needs a 270° clockwise image
+correction. Through the API, add `"orientation": 270` to `output_config`.
+
+The default is 0° and existing boards keep their current output. Rotation applies to text,
+pixel canvases, sequences and every transition frame. The app preview stays logically upright;
+the 64 × 64 output and page dimensions do not change.
+
 ## Configuration Reference
 
 | Setting | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
 | `host` | string | Yes | — | The Pixoo's IP address or hostname. A port is accepted (`192.168.1.50:80`); `http://` and any path are ignored. |
+| `orientation` | integer: `0`, `90`, `180`, `270` | No | `0` | Clockwise image correction for mounting. Preview and page dimensions stay unchanged. |
 | `brightness` | integer, 0–100 | No | the device's own | Screen brightness, applied after the first page lands. Leave it out to keep the brightness you set in the Divoom app. |
 | `font` | `"5x7"` or `"3x5"` | No | `"5x7"` | **Text size** on the board screen. Large (`"5x7"`) draws 5×7-pixel letters on 8 rows × 10 columns: the easiest to read across a room, and lowercase reads well. Small (`"3x5"`) draws 3×5-pixel letters on 10 rows × 16 columns: more text fits, best in uppercase. Changing it resizes the board and its pages. New boards start Large; a board made before 0.5.0 keeps Small. |
 | `tile_gap` | `"gap"` or `"fill"` | No | `"gap"` | **Tile style** on the board screen. Gaps keeps the one-pixel line between neighbouring color tiles; Seamless lights it when both are the same color, so a row of tiles reads as one solid bar. A corner pixel lights only when all four cells around it match. |
