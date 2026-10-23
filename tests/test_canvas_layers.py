@@ -146,10 +146,17 @@ def test_a_transition_away_from_a_canvas_starts_from_it_and_drops_it(pixoo, make
 @canvases
 def test_a_fade_through_black_swaps_in_the_new_pages_canvas(pixoo, make_plugin):
     plugin = make_plugin(brightness=80)
+    before = canvas_frame("OLD", x=40, y=40)
     after = canvas_frame("NEW", x=8, y=8)
-    result = plugin.write_transition(rows("OLD"), after, explicit("fade"), cancel=CancelToken())
+    result = plugin.write_transition(before, after, explicit("fade"), cancel=CancelToken())
     assert (result.success, result.was_sent) == (True, True)
-    assert pushed(pixoo) == [expected(plugin, after)]
+    old_pixels, new_pixels = expected(plugin, before), expected(plugin, after)
+    frames = pushed(pixoo)
+    assert frames == [bytes(v * level // 3 for v in old_pixels) for level in (2, 1, 0)] + [
+        bytes(v * level // 3 for v in new_pixels) for level in (1, 2, 3)
+    ]
+    assert pixel(frames[0], 41, 41) == tuple(v * 2 // 3 for v in COLOR)
+    assert pixel(frames[-1], 9, 9) == COLOR
 
 
 @canvases

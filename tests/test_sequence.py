@@ -1,6 +1,6 @@
 """Changes of page: every transition and explicit sequence is streamed as
 paced single-frame pushes ending on the target; a fade goes through black
-with the brightness command unless the board asks for a blend."""
+with dimmed pixel frames unless the board asks for a blend."""
 
 from __future__ import annotations
 
@@ -226,96 +226,74 @@ def test_a_failure_mid_stream_is_a_failed_write(pixoo, make_plugin):
 # --- fade -----------------------------------------------------------------------------------------
 
 
-def test_a_fade_dims_to_black_swaps_and_comes_back_to_the_devices_own_brightness(pixoo, make_plugin):
+def test_a_fade_streams_dimmed_old_pixels_black_then_brightening_target(pixoo, make_plugin):
     plugin = make_plugin()
     result = plugin.write_transition(cells(1), cells(2), explicit("fade"), cancel=CancelToken())
-
     assert (result.success, result.was_sent) == (True, True)
-    names = pixoo.names()
-    # The device's own level (60 in the mock) is read once, then 5 steps down to 0.
-    assert names[0] == GET_CONF
-    assert levels(pixoo) == [48, 36, 24, 12, 0, 12, 24, 36, 48, 60]
-    # The new board goes up while the screen is dark, as a single still.
-    before_swap = [c for c in pixoo.commands[: names.index(SEND)] if c.get("Command") == BRIGHTNESS]
-    assert before_swap[-1]["Brightness"] == 0
-    assert [(c["PicNum"], c["PicData"]) for c in pixoo.pushes()] == [(1, data(2))]
+    before, target = render_frame(frame(1)), render_frame(frame(2))
+    expected = [bytes(v * level // 3 for v in before) for level in (2, 1, 0)]
+    expected += [bytes(v * level // 3 for v in target) for level in (1, 2, 3)]
+    assert [base64.b64decode(push["PicData"]) for push in pixoo.pushes()] == expected
+    assert all(push["PicNum"] == 1 for push in pixoo.pushes())
+    assert BRIGHTNESS not in pixoo.names() and GET_CONF not in pixoo.names()
 
 
-def test_fade_steps_are_paced(pixoo, make_plugin):
+def test_fade_steps_respect_the_models_stream_pacing(pixoo, make_plugin):
     plugin = make_plugin()
-    plugin.FADE_STEP_S = 0.05
-    started = time.monotonic()
+    plugin.STREAM_STEP_S = 0.05
+    stamps = push_times(pixoo)
     plugin.write_transition(cells(1), cells(2), explicit("fade"), cancel=CancelToken())
-    # Nine paced steps (five down, four up); the restore is not paced.
-    assert time.monotonic() - started >= 9 * 0.05 - 0.02
+    assert len(stamps) == 6
+    assert all(stamps[index] - stamps[index - 1] >= 0.05 - 0.01 for index in range(1, len(stamps)))
 
 
-def test_a_fade_stays_black_until_the_new_image_has_had_time_to_show(pixoo, make_plugin):
-    plugin = make_plugin()
-    plugin.FADE_SWAP_S = 0.2
-    stamps: list[tuple[str, int | None, float]] = []
-    pixoo.on_command = lambda command, index: stamps.append(
-        (command.get("Command"), command.get("Brightness"), time.monotonic())
-    )
-    plugin.write_transition(cells(1), cells(2), explicit("fade"), cancel=CancelToken())
-    swap = next(t for name, _, t in stamps if name == SEND)
-    first_up = next(t for name, level, t in stamps if name == BRIGHTNESS and t > swap)
-    assert first_up - swap >= 0.2 - 0.01
-
-
-def test_a_fade_uses_the_boards_brightness_without_asking_the_device(pixoo, make_plugin):
+def test_a_fade_applies_the_boards_brightness_once_after_the_target(pixoo, make_plugin):
     plugin = make_plugin(brightness=80)
     plugin.write_transition(cells(1), cells(2), explicit("fade"), cancel=CancelToken())
     assert GET_CONF not in pixoo.names()
-    assert levels(pixoo)[0] == 64 and levels(pixoo)[-1] == 80
-    # The fade's restore is the board's brightness: no second set afterwards.
-    assert levels(pixoo).count(80) == 1
+    assert levels(pixoo) == [80]
+    assert pixoo.names()[-1] == BRIGHTNESS
+    assert pixoo.pushes()[-1]["PicData"] == data(2)
 
 
-def test_an_unreadable_device_brightness_snaps_instead_of_guessing_a_level(pixoo, make_plugin):
-    plugin = make_plugin()
-
-    def no_conf(command, index):
-        pixoo.mode = "http_500" if command.get("Command") == GET_CONF else "ok"
-
-    pixoo.on_command = no_conf
-    result = plugin.write_transition(cells(1), cells(2), explicit("fade"), cancel=CancelToken())
-    assert (result.success, result.was_sent) == (True, True)
-    assert levels(pixoo) == []
-    assert [c["PicData"] for c in pixoo.pushes()] == [data(2)]
-
-
-def test_cancel_while_dimming_still_restores_the_brightness(pixoo, make_plugin):
+def test_cancel_while_dimming_stops_before_the_next_pixel_frame(pixoo, make_plugin):
     plugin = make_plugin()
     event = threading.Event()
 
-    def cancel_on_second_step(command, index):
-        if command.get("Command") == BRIGHTNESS and len(levels(pixoo)) == 2:
+    def cancel_on_second_push(command, index):
+        if command.get("Command") == SEND and len(pixoo.pushes()) == 2:
             event.set()
 
-    pixoo.on_command = cancel_on_second_step
+    pixoo.on_command = cancel_on_second_push
     token = CancelToken(event)
-    # As core runs it: inside the cancel scope, where a cancelled run's requests are refused.
     with plugin.http.cancel_scope(token):
         result = plugin.write_transition(cells(1), cells(2), explicit("fade"), cancel=token)
     assert (result.success, result.was_sent) == (True, False)
-    assert levels(pixoo) == [48, 36, 60]
-    assert pixoo.pushes() == []
+    assert len(pixoo.pushes()) == 2
+    assert levels(pixoo) == []
 
 
-def test_cancel_while_brightening_restores_the_brightness_at_once(pixoo, make_plugin):
-    plugin = make_plugin()
+def test_cancel_after_the_target_lands_reports_sent_without_cleanup_requests(pixoo, make_plugin):
+    plugin = make_plugin(brightness=40)
     event = threading.Event()
-    pixoo.on_command = lambda command, index: event.set() if command.get("Command") == SEND else None
+
+    def cancel_on_target(command, index):
+        if command.get("Command") == SEND and len(pixoo.pushes()) == 6:
+            event.set()
+
+    pixoo.on_command = cancel_on_target
     token = CancelToken(event)
     with plugin.http.cancel_scope(token):
         result = plugin.write_transition(cells(1), cells(2), explicit("fade"), cancel=token)
-    # The frame landed; the ramp up is skipped and the level comes straight back.
     assert (result.success, result.was_sent) == (True, True)
-    assert levels(pixoo) == [48, 36, 24, 12, 0, 60]
+    assert len(pixoo.pushes()) == 6 and pixoo.pushes()[-1]["PicData"] == data(2)
+    assert levels(pixoo) == []
+    pixoo.on_command = None
+    plugin.write(frame(3), native=None, cancel=CancelToken())
+    assert levels(pixoo) == [40]
 
 
-def test_a_fade_cancelled_before_it_starts_leaves_the_brightness_alone(pixoo, make_plugin):
+def test_a_fade_cancelled_before_it_starts_leaves_the_device_alone(pixoo, make_plugin):
     plugin = make_plugin()
     event = threading.Event()
     event.set()
@@ -326,19 +304,18 @@ def test_a_fade_cancelled_before_it_starts_leaves_the_brightness_alone(pixoo, ma
     assert pixoo.commands == []
 
 
-def test_a_failed_swap_is_a_failed_write_that_still_restores_the_brightness(pixoo, make_plugin):
+def test_a_failed_fade_is_a_failed_write_without_a_persistent_brightness_change(pixoo, make_plugin):
     plugin = make_plugin()
 
-    def fail_the_push(command, index):
-        if command.get("Command") == SEND:
+    def fail_second_push(command, index):
+        if command.get("Command") == SEND and len(pixoo.pushes()) == 2:
             pixoo.mode = "http_500"
-        elif command.get("Command") == BRIGHTNESS and command["Brightness"] == 60:
-            pixoo.mode = "ok"
 
-    pixoo.on_command = fail_the_push
+    pixoo.on_command = fail_second_push
     result = plugin.write_transition(cells(1), cells(2), explicit("fade"), cancel=CancelToken())
     assert (result.success, result.was_sent) == (False, False)
-    assert levels(pixoo)[-1] == 60
+    assert levels(pixoo) == []
+    assert len(pixoo.pushes()) == 2
 
 
 def test_a_failed_restore_is_retried_after_the_next_frame(pixoo, make_plugin):

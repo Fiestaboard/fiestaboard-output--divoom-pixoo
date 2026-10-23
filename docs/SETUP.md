@@ -114,7 +114,7 @@ the 64 × 64 output and page dimensions do not change.
 | `font` | `"5x7"` or `"3x5"` | No | `"5x7"` | **Text size** on the board screen. Large (`"5x7"`) draws 5×7-pixel letters on 8 rows × 10 columns: the easiest to read across a room, and lowercase reads well. Small (`"3x5"`) draws 3×5-pixel letters on 10 rows × 16 columns: more text fits, best in uppercase. Changing it resizes the board and its pages. New boards start Large; a board made before 0.5.0 keeps Small. |
 | `tile_gap` | `"gap"` or `"fill"` | No | `"gap"` | **Tile style** on the board screen. Gaps keeps the one-pixel line between neighbouring color tiles; Seamless lights it when both are the same color, so a row of tiles reads as one solid bar. A corner pixel lights only when all four cells around it match. |
 | `block_padding` | `0` or `1` | No | `0` | **Block padding** on the board screen. 1 pixel grows the background of highlighted text (`{black/white:TEXT}`) one pixel on every side, so the letters never touch its edge. It never covers a neighbouring character, and a pixel between two different colors stays dark. |
-| `fade_style` | `"black"` or `"blend"` | No | `"black"` | **Fade style**: how the Fade transition looks. Through black dims the screen, swaps the page and brightens it again (about a second). Blend cross-fades the two pages in a few frames. |
+| `fade_style` | `"black"` or `"blend"` | No | `"black"` | **Fade style**: how the Fade transition looks. Through black streams six pixel frames in about a second without changing persistent brightness. Blend cross-fades the two pages. Both are stepped at about 5 fps. |
 | `mac` | string, 12 hex digits | No | — | The Pixoo's MAC address, filled in by the Divoom cloud lookup. With it saved, the lookup finds this Pixoo again after its IP address changes. |
 
 **Environment variables**
@@ -194,6 +194,8 @@ no authentication.
 
 **The screen stays dim after a fade**
 
-- A fade through black always sets the brightness back, even when a newer page interrupts it. If
-  the Pixoo stopped answering mid-fade, the next page sets your `brightness` again; without a
-  `brightness` setting, set it in the Divoom app or add one here.
+- A fade through black now changes pixels rather than persistent brightness. An interrupted
+  fade may leave a dim pixel frame until the next successful page send, but it does not dim
+  future pages. If an older plugin version left the device's brightness low, set it in the
+  Divoom app or add an explicit `brightness` setting here. The new six-frame fade has mock-test
+  coverage; physical smoothness and frame delivery still need validation.

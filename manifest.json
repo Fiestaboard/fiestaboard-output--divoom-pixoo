@@ -100,7 +100,7 @@
         "fade_style": {
           "type": "string",
           "title": "Fade style",
-          "description": "How the Fade transition looks. Through black dims the screen, swaps the message and brightens it again (smooth, about a second). Blend cross-fades the two messages in a few steps.",
+          "description": "How the Fade transition looks. Through black streams six pixel frames through black in about a second, without changing screen brightness. Blend cross-fades the two messages. Both look stepped at about five frames per second.",
           "enum": [
             "black",
             "blend"

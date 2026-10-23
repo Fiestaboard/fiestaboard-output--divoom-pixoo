@@ -14,7 +14,7 @@ The Pixoo 64 is a 64×64 RGB LED matrix with a local HTTP API. This output plugi
 FiestaBoard page into pixels with FiestaBoard's own LED renderer and pushes them to the device.
 Page changes animate: FiestaBoard's LED transitions (flip, slide, wipe, cascade, dissolve, fade)
 are streamed to the panel as single frames at five a second, and fade dims the screen through
-black with the brightness command (see [How it works](#how-it-works)).
+black with streamed pixel frames (see [How it works](#how-it-works)).
 
 ## Device
 
@@ -108,7 +108,7 @@ empty (or add your Pixoo's address) to search a real network.
 - Optional, clearly labelled lookup through Divoom's cloud when the search finds nothing
 - Animated page changes: every FiestaBoard LED transition, streamed as single frames at five a
   second with no loading screen and no looping, always landing on the new page
-- **Fade style**: a smooth fade through black using the panel's brightness, or a pixel blend
+- **Fade style**: a stepped pixel fade through black, or a pixel blend
 - Text and colours drawn into the image (the device's own text command is an overlay that every
   new image wipes)
 - Keeps the device's picture ids increasing, so no update is silently ignored, and resets them
@@ -153,12 +153,13 @@ half of a per-cell transition (flip, cascade, dissolve) and the new page's for t
 last frame always has the new page's. A fade through black swaps in the new page with its
 canvases.
 
-**Fade** goes through black by default: the plugin dims the panel in five steps with
-`Channel/SetBrightness`, pushes the new page while the screen is dark, and brightens it back, in
-about 1.1 s. The level it returns to is the board's `brightness` setting, else the device's own
-(read with `Channel/GetAllConf`; if the device does not say, the page changes without a fade). The
-brightness is restored even when a newer page cuts the fade short. `fade_style: "blend"` streams
-the pixel cross-fade instead.
+**Fade** goes through black by default using six single-frame pixel pushes: two dimmed old
+images, black, and three progressively brighter new images ending on the exact target. At the
+model's 5 fps stream rate this takes about one second and looks stepped. It does not temporarily
+change the device's persistent brightness, so cancellation, replacement or shutdown needs no
+brightness-restoration request. An explicit `brightness` setting still applies after the target
+lands. `fade_style: "blend"` cross-fades the pixels instead. The new through-black sequence has
+automated mock coverage; its physical appearance and frame delivery still need a device check.
 
 Why stream rather than upload an animation, measured with a camera:
 
@@ -191,7 +192,7 @@ accepted; a reused or lower id still answers `error_code` 0 but is silently igno
 requests once a write is cancelled; the reset, id and brightness commands are marked as setup
 requests. Each request has a 3 s connect and 5 s read timeout. The plugin
 checks whether a newer page has arrived before every request and between streamed frames, and
-stops there (a fade still restores the brightness first). A device error is reported as a failed write, never raised; three failed writes in
+stops there, including during a fade. A device error is reported as a failed write, never raised; three failed writes in
 a row make FiestaBoard pause this device for a few minutes.
 
 **Rendering.** All drawing goes through FiestaBoard core's LED renderer (`src.led`, imported
