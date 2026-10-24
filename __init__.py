@@ -17,12 +17,12 @@ What the hardware labs (camera-timed, on a real Pixoo 64) settled:
   20 frames showed and the final frame always did. So the device model
   streams at ``maxFps`` 5 and every LED transition core plans is played as
   paced stills at up to :data:`STREAM_MAX_FPS`: flip, slide, wipe, cascade,
-  dissolve and fade all verified on the panel.
-- **Fade goes through black** by default: ``Channel/SetBrightness`` answers
-  in ~75 ms, so dimming to 0, swapping the image and brightening back takes
-  ~1.1 s and looks far smoother than a 5-frame cross-fade. The board's
-  brightness is always restored, even when a newer page cuts it short.
-  ``fade_style: blend`` keeps the pixel cross-fade.
+  dissolve and pixel blend were verified on the panel in those labs.
+- **Fade goes through black** by default as six streamed pixel frames,
+  about one second at 5 fps. This is a stepped fade; it never uses persistent
+  hardware brightness as temporary state, so cancellation or replacement
+  cannot strand that setting at zero. ``fade_style: blend`` cross-fades pixels.
+  The revised through-black sequence has not yet been camera-verified.
 - **write / write_cells** push one still frame. Text is drawn into the image
   (``Draw/SendHttpText`` is an overlay that every new image wipes).
 - **Pixel canvases** (a page's bitmap layers, ``frame.layers`` on cores that
@@ -125,18 +125,10 @@ STREAM_MAX_FPS = 5
 #: (lab 2 played them at this length).
 STREAM_TRANSITION_MS = 1000
 
-#: Brightness steps each way in a fade through black, and the time each
-#: step takes. The command answers in 30-75 ms; unpaced, the dim is over in
-#: a quarter of a second and reads as a cut to black (camera-checked), so
-#: each step is held to about 90 ms: about a second for the whole fade.
-FADE_STEPS = 5
-FADE_STEP_S = 0.09
-
-#: How long a fade stays black after the new image is pushed. The device
-#: answers a push before it shows the image (up to ~0.5 s later) while a
-#: brightness change is immediate: brightening at once lit the OLD page
-#: again for a moment (camera-checked).
-FADE_SWAP_S = 0.45
+#: Three pixel steps to black and three back to the target. At the model's
+#: five-frame/second stream rate, the six pushes take about one second.
+#: Never use persistent device brightness as temporary transition state.
+FADE_STEPS = 3
 
 #: The least time between two Divoom cloud lookups for a Pixoo that stopped
 #: answering at its saved address (core polls every ~30 s; the cloud need not
@@ -355,15 +347,6 @@ def _fence_guidance() -> list[str]:
     return []
 
 
-class _Never:
-    """A cancel token that never fires."""
-
-    cancelled = False
-
-
-_NEVER = _Never()
-
-
 def _token(cell: Any) -> BoardToken:
     """One cell as a board token: a rich cell as is, a 0-71 code projected."""
     return cell if isinstance(cell, BoardToken) else cells_from_codes([[int(cell)]])[0][0]
@@ -383,8 +366,6 @@ class DivoomPixoo(OutputPluginBase):
 
     # Device pacing, as instance-overridable attributes (tests shorten them).
     RESET_AFTER_PUSHES = RESET_AFTER_PUSHES
-    FADE_STEP_S = FADE_STEP_S
-    FADE_SWAP_S = FADE_SWAP_S
     #: Seconds between streamed frames; ``None`` = one frame at the model's
     #: rate (capped at :data:`STREAM_MAX_FPS`). Tests set 0.
     STREAM_STEP_S: float | None = None
@@ -452,8 +433,7 @@ class DivoomPixoo(OutputPluginBase):
     def _post(self, payload: dict[str, Any], *, setup: bool = False, cancel: Any = None) -> dict[str, Any]:
         """Send one command through ``self.http``; the device's JSON reply, or raise.
 
-        *cancel* overrides the run's cancel token (``_NEVER`` sends even after
-        the run was cancelled: restoring brightness must not be skipped).
+        *cancel* explicitly binds a live write token; requests stop when it is cancelled.
 
         Raises:
             requests.RequestException: no answer, a fenced host
@@ -621,66 +601,23 @@ class DivoomPixoo(OutputPluginBase):
         self._apply_brightness(cancel)
         return WriteResult(True, True)
 
-    def _current_brightness(self) -> int | None:
-        """The brightness to come back to: the board's setting, else the
-        device's own; ``None`` when the device does not say."""
-        if self._brightness is not None:
-            return self._brightness
-        try:
-            level = self._post({"Command": GET_ALL_CONF}, setup=True).get("Brightness")
-        except Exception:
-            return None
-        return level if isinstance(level, int) and not isinstance(level, bool) and 0 <= level <= 100 else None
+    def _fade_through_black(self, before: bytes, target: bytes, cancel: CancelToken) -> WriteResult:
+        """Stream a dimmed old image, black, then the brightening target.
 
-    def _set_brightness(self, level: int, *, always: bool = False) -> None:
-        self._post({"Command": SET_BRIGHTNESS, "Brightness": level}, setup=True, cancel=_NEVER if always else None)
-
-    def _fade_step(self, level: int, cancel: CancelToken) -> bool:
-        """One paced step of a fade; True when the run was cancelled meanwhile."""
-        started = time.monotonic()
-        self._set_brightness(level)
-        left = self.FADE_STEP_S - (time.monotonic() - started)
-        return left > 0 and self._wait(left, cancel)
-
-    def _fade_through_black(self, target: bytes, cancel: CancelToken) -> WriteResult:
-        """Dim to black, swap in *target*, hold, brighten back (~1.3 s on the device).
-
-        The board's brightness comes back whatever happens: a cancel or a
-        failure part-way still restores it before returning. When the level
-        to come back to is unknown, it snaps instead: a guess could leave the
-        screen brighter or dimmer than its owner set it.
+        Brightness is a persistent device setting. Using it for a transient
+        fade would require requests after cancellation, or leave the device
+        dim when a runtime is replaced or stopped. Pixel frames need no such
+        cleanup: any successor frame replaces the interrupted transition.
         """
         if cancel.cancelled:
             return WriteResult(True, False)
-        level = self._current_brightness()
-        if level is None:
-            return self._still(target, cancel)
-        down = [round(level * (FADE_STEPS - 1 - i) / FADE_STEPS) for i in range(FADE_STEPS)]
-        result = WriteResult(True, False)
-        try:
-            for step in down:
-                if cancel.cancelled or self._fade_step(step, cancel):
-                    return result
-            failed = self._deliver([target], [STILL_SPEED_MS], cancel)
-            if failed is not None:
-                return failed
-            result = WriteResult(True, True)
-            if self._wait(self.FADE_SWAP_S, cancel):
-                return result
-            for step in reversed(down[:-1]):
-                if cancel.cancelled or self._fade_step(step, cancel):
-                    break
-            return result
-        except Exception as exc:
-            logger.warning("Pixoo %s: fade through black failed: %s", self.host, exc)
-            return WriteResult(False, False)
-        finally:
-            try:
-                self._set_brightness(level, always=True)
-                self._brightness_pending = False
-            except Exception as exc:
-                logger.warning("Pixoo %s: restoring brightness %s failed: %s", self.host, level, exc)
-                self._brightness_pending = self._brightness is not None
+
+        def dim(pixels: bytes, numerator: int) -> bytes:
+            return bytes(value * numerator // FADE_STEPS for value in pixels)
+
+        frames = [dim(before, level) for level in range(FADE_STEPS - 1, -1, -1)]
+        frames.extend(dim(target, level) for level in range(1, FADE_STEPS + 1))
+        return self._stream(frames, [0.0] * len(frames), cancel)
 
     def _step_s(self) -> float:
         """The shortest gap between streamed frames."""
@@ -718,7 +655,7 @@ class DivoomPixoo(OutputPluginBase):
             return self._still(self.render(after), cancel)
         spec = transition.spec
         if getattr(spec, "kind", None) == "fade" and self.config.get("fade_style", "black") != "blend":
-            return self._fade_through_black(self.render(after), cancel)
+            return self._fade_through_black(self.render(before), self.render(after), cancel)
         if spec.kind != "flip" and spec.duration_ms is None:
             spec = replace(spec, duration_ms=STREAM_TRANSITION_MS)
         planned = plan_transition(self.layout(before), self.layout(after), spec)

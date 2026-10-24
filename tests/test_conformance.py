@@ -56,5 +56,5 @@ def test_the_plugin_is_conformant():
     # Every rule ran (device_traffic included) except the secret check.
     assert sorted(report.skipped) == [
         "device_key: no secret values in the config to look for",
-        "sequence: animation is 'stream'",
+        "sequence: [divoom_pixoo64] animation is 'stream'",
     ], report.skipped
