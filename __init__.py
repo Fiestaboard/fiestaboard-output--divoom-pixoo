@@ -38,15 +38,18 @@ What the hardware labs (camera-timed, on a real Pixoo 64) settled:
 - **PicID policy.** A session (the first upload of an instance, or after a
   failed or cancelled one) starts with ``Draw/ResetHttpGifId`` and is
   seeded from ``Draw/GetHttpGifId`` (0 means 1); after
-  :data:`RESET_AFTER_PUSHES` frame pushes it resets again and restarts at 1.
+  :data:`RESET_AFTER_PUSHES` frame pushes it resets and re-seeds again.
   IDs only ever go up within a session: the device silently ignores a
   reused or lower PicID while still answering ``error_code`` 0, so 0 means
   "accepted", not "shown".
 - **Device poll** (core's ``poll_device`` hook, see :meth:`DivoomPixoo.poll_device`).
-  The device's next PicID below ours means it restarted (``restarted``);
-  above ours means another client's upload displayed (``overwritten``, or
-  ``restarted`` on a core without that field); equal is no news. A change
-  that uploads nothing (the Divoom app switching channel) is undetectable.
+  The device's next PicID below ours means it restarted, or another client
+  reset the counter before uploading (the common ``pixoo`` library does);
+  the two cannot be told apart, so both are ``restarted``. Above ours means
+  another client uploaded without resetting first (``overwritten``, or
+  ``restarted`` on a core without that field). Equal is not detectable. A
+  change that uploads nothing (the Divoom app switching channel) is
+  undetectable too.
 
 All device traffic goes through ``self.http`` (core's helper: the
 ``FIESTABOARD_OUTPUTS_ALLOW_HOSTS`` fence, no redirects, the run's cancel
@@ -518,13 +521,12 @@ class DivoomPixoo(OutputPluginBase):
         try:
             if cancel.cancelled:
                 return None
-            if self._next_pic_id is None:
+            if self._next_pic_id is None or self._pushes_since_reset + count > self.RESET_AFTER_PUSHES:
+                # The threshold re-seeds too: a reset the device ignored keeps
+                # its last id, and counting from 1 again would be ignored.
+                self._next_pic_id = None
                 if not self._start_session(cancel):
                     return None
-            elif self._pushes_since_reset + count > self.RESET_AFTER_PUSHES:
-                self._next_pic_id = None
-                self._post({"Command": RESET_GIF_ID}, setup=True)
-                self._next_pic_id, self._pushes_since_reset = 1, 0
             pic_id = self._next_pic_id
             assert pic_id is not None
             for offset, (pixels, speed) in enumerate(zip(frames, speeds, strict=True)):
@@ -820,18 +822,24 @@ class DivoomPixoo(OutputPluginBase):
         though the page has not changed, when:
 
         - the device's next id is below the one this instance would upload
-          next: it forgot every id since our last upload;
+          next: it forgot every id since our last upload. Another client
+          that resets the counter before uploading (the common ``pixoo``
+          library does) looks exactly the same; the counter cannot tell a
+          reboot from a foreign reset;
         - it answers again after an upload failed: whatever it shows now,
           core's last frame never reached it.
 
         An upload displays only when its id is above the last accepted one,
-        so another client's upload that displayed leaves the device's next id
-        ABOVE ours. Reported as ``overwritten`` (core marks the board out of
+        so another client's upload that displayed without a reset first
+        leaves the device's next id ABOVE ours. Reported as ``overwritten`` (core marks the board out of
         sync and re-sends unless the board's automatic restore is off); on a
         core whose :class:`DevicePoll` has no ``overwritten`` field, as a
-        restart, which re-sends too. An equal id is no news: either nothing
-        happened, or something the counter cannot show (an app switching the
-        channel without uploading — the Pixoo cannot report its pixels).
+        restart, which re-sends too. (A failed upload leaves no id of ours to
+        compare, so the two cases never co-occur.) An equal id is no news:
+        either nothing happened, or something the counter cannot show (an
+        app switching the channel without uploading, or a client that reset
+        and uploaded until the ids matched ours — the Pixoo cannot report
+        its pixels).
 
         Either way the session restarts, so the next upload resets the
         device's counter and is seeded from it: its id lands above the
@@ -857,7 +865,7 @@ class DivoomPixoo(OutputPluginBase):
         ours = self._next_pic_id
         known = isinstance(device_next, int) and not isinstance(device_next, bool) and ours is not None
         forgot = known and device_next < ours
-        if known and not self._upload_failed and device_next > ours:
+        if known and device_next > ours:
             logger.info(
                 "Pixoo %s: another client uploaded an image (next picture id %s, ours %s); "
                 "reporting the board overwritten",

@@ -52,7 +52,7 @@ def closed_port() -> int:
 def test_a_reboot_that_reset_the_picture_ids_is_a_restart(pixoo, make_plugin):
     plugin = make_plugin()
     assert show(plugin).success
-    pixoo.last_pic_id = 0  # power-cycled: the device forgot every id
+    pixoo.power_cycle()  # the device forgot every id
 
     assert plugin.poll_device() == DevicePoll(restarted=True)
 
@@ -60,7 +60,7 @@ def test_a_reboot_that_reset_the_picture_ids_is_a_restart(pixoo, make_plugin):
 def test_after_a_restart_the_next_write_starts_a_fresh_session(pixoo, make_plugin):
     plugin = make_plugin()
     show(plugin)
-    pixoo.last_pic_id = 0
+    pixoo.power_cycle()
     plugin.poll_device()
     pixoo.commands.clear()
 
@@ -111,7 +111,7 @@ def test_a_landed_upload_clears_the_failure(pixoo, make_plugin):
 def test_a_restart_re_applies_the_configured_brightness(pixoo, make_plugin):
     plugin = make_plugin(brightness=40)
     show(plugin)
-    pixoo.last_pic_id = 0
+    pixoo.power_cycle()
     plugin.poll_device()
     pixoo.commands.clear()
 
@@ -143,7 +143,7 @@ def test_no_address_reports_nothing():
 def test_a_core_without_the_hook_type_gets_nothing(pixoo, make_plugin, monkeypatch):
     plugin = make_plugin()
     show(plugin)
-    pixoo.last_pic_id = 0
+    pixoo.power_cycle()
     monkeypatch.setattr(divoom_pixoo, "DevicePoll", None)
 
     assert plugin.poll_device() is None
@@ -221,7 +221,7 @@ def test_an_unchanged_counter_is_no_news_on_a_core_that_knows_overwrites(pixoo, 
 def test_a_lower_counter_is_still_a_restart_on_a_core_that_knows_overwrites(pixoo, make_plugin, new_core):
     plugin = make_plugin()
     show(plugin)
-    pixoo.last_pic_id = 0
+    pixoo.power_cycle()
 
     assert plugin.poll_device() == NewCorePoll(restarted=True)
 

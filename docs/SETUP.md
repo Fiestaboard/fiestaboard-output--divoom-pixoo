@@ -177,13 +177,22 @@ no authentication.
 
 **Another app changed the Pixoo's picture**
 
-- When another app or script uploads an image to the Pixoo, FiestaBoard notices within about half
-  a minute, marks the board as out of sync and sends the page again. Turn off the board's
-  **Restore automatically** setting to leave the other app's image up instead. Needs a
-  FiestaBoard that reports overwritten boards; older versions with the device poll treat it as a
-  restart and send the page again.
+- When a script, and possibly the Divoom app (unverified on hardware), uploads an image to the
+  Pixoo without resetting its picture counter, FiestaBoard notices within about half a minute,
+  marks the board as out of sync and sends the page again. Needs a FiestaBoard that reports
+  overwritten boards; older versions with the device poll treat it as a restart and send the
+  page again.
+- Turn off the board's **Restore automatically** setting to leave the other app's image up
+  instead. Your page comes back when it next changes. After reporting one overwrite, FiestaBoard
+  cannot notice another change until it writes to the Pixoo again.
+- Many clients, including the popular `pixoo` Python library, reset the counter before
+  uploading. FiestaBoard cannot tell that from a restart, so it always sends the page again
+  (whatever **Restore automatically** says), or, when the counts happen to match, notices
+  nothing.
 - Changing the channel or clock face in the Divoom app, without uploading an image, cannot be
   detected: the Pixoo does not report what it shows. The page comes back when it next changes.
+- Use one FiestaBoard board per Pixoo. Two boards driving the same device each see the other as
+  "another app" and keep sending their own page over it.
 
 **The Pixoo stopped updating after a while**
 

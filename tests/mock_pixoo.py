@@ -20,7 +20,9 @@ PicIDs behave as the 2026-10-04 hardware lab measured: ``Draw/GetHttpGifId``
 answers the next id (0 right after a reset); an upload displays only when its
 PicID is above the last accepted one, and a reused or lower PicID still
 answers ``error_code`` 0 (recorded in ``ignored``). ``ignore_reset`` makes
-the device keep its last id across a reset. :meth:`foreign_upload` plays
+the device keep its last id across a reset. :meth:`power_cycle` plays a
+reboot: every id forgotten, and ``Draw/GetHttpGifId`` answers 1 (not the 0
+of a reset) until the next reset or upload. :meth:`foreign_upload` plays
 another client (the Divoom app, a script) uploading its own image.
 
 ``on_command`` (``fn(command_dict, index)``) runs before the answer, so a
@@ -71,6 +73,7 @@ class MockPixoo:
         #: The device's PicID state (lab-verified semantics, see _answer).
         self.last_pic_id = 0
         self.ignore_reset = False
+        self._fresh_boot = False
         self.displayed: list[dict[str, Any]] = []
         self.ignored: list[dict[str, Any]] = []
         self._frozen = False
@@ -132,6 +135,13 @@ class MockPixoo:
         with self._lock:
             self.commands = []
 
+    # --- the device itself ------------------------------------------------------------------
+
+    def power_cycle(self) -> None:
+        """A reboot: the device forgets every id (it answered 1 on the bench)."""
+        self.last_pic_id = 0
+        self._fresh_boot = True
+
     # --- other clients ---------------------------------------------------------------------
 
     def foreign_upload(self, pic_id: int | None = None) -> bool:
@@ -169,12 +179,17 @@ class MockPixoo:
         if self.mode == "error_code":
             return 200, {"error_code": 1}
         name = command.get("Command")
+        if name in (RESET, SEND):
+            self._fresh_boot = False
         if name == RESET:
             self._pushes_since_reset = 0
             if not self.ignore_reset:
                 self.last_pic_id = 0
         elif name == GET_ID:
-            # The next id, or 0 right after a reset (lab-verified).
+            # The next id: 0 right after a reset, 1 right after a power-cycle
+            # (both lab-verified).
+            if self._fresh_boot:
+                return 200, {"error_code": 0, "PicId": 1}
             return 200, {"error_code": 0, "PicId": self.last_pic_id + 1 if self.last_pic_id else 0}
         elif name == SEND:
             self._pushes_since_reset += 1
