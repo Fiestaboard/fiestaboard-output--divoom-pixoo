@@ -1,16 +1,21 @@
-"""poll_device: tell core when the Pixoo restarted or moved to a new address.
+"""poll_device: tell core when the Pixoo restarted, was overwritten by another
+client, or moved to a new address.
 
 A reboot wipes FiestaBoard's image back to the Pixoo's own clock face. Core
 skips a page the board already shows, so without this an unchanged page was
 never sent again. The reboot also resets the device's picture-id counter,
-which is how the plugin tells. A Pixoo that came back on a new DHCP address
+which is how the plugin tells. Another client's upload that displayed
+pushes the counter past ours instead: reported as overwritten. A Pixoo that came back on a new DHCP address
 is found again by its saved MAC through Divoom's cloud lookup.
 """
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import socket
+from collections.abc import Mapping
+from typing import Any
 
 import pytest
 import requests
@@ -47,7 +52,7 @@ def closed_port() -> int:
 def test_a_reboot_that_reset_the_picture_ids_is_a_restart(pixoo, make_plugin):
     plugin = make_plugin()
     assert show(plugin).success
-    pixoo.last_pic_id = 0  # power-cycled: the device forgot every id
+    pixoo.power_cycle()  # the device forgot every id
 
     assert plugin.poll_device() == DevicePoll(restarted=True)
 
@@ -55,7 +60,7 @@ def test_a_reboot_that_reset_the_picture_ids_is_a_restart(pixoo, make_plugin):
 def test_after_a_restart_the_next_write_starts_a_fresh_session(pixoo, make_plugin):
     plugin = make_plugin()
     show(plugin)
-    pixoo.last_pic_id = 0
+    pixoo.power_cycle()
     plugin.poll_device()
     pixoo.commands.clear()
 
@@ -106,7 +111,7 @@ def test_a_landed_upload_clears_the_failure(pixoo, make_plugin):
 def test_a_restart_re_applies_the_configured_brightness(pixoo, make_plugin):
     plugin = make_plugin(brightness=40)
     show(plugin)
-    pixoo.last_pic_id = 0
+    pixoo.power_cycle()
     plugin.poll_device()
     pixoo.commands.clear()
 
@@ -138,10 +143,135 @@ def test_no_address_reports_nothing():
 def test_a_core_without_the_hook_type_gets_nothing(pixoo, make_plugin, monkeypatch):
     plugin = make_plugin()
     show(plugin)
-    pixoo.last_pic_id = 0
+    pixoo.power_cycle()
     monkeypatch.setattr(divoom_pixoo, "DevicePoll", None)
 
     assert plugin.poll_device() is None
+
+
+# --- overwritten by another client -----------------------------------------------------------
+#
+# The ``overwritten`` field is new in core (FiestaBoard#2354). These stand-ins
+# pin both shapes, whichever one the core under test carries.
+
+
+@dataclasses.dataclass(frozen=True)
+class NewCorePoll:
+    restarted: bool = False
+    config: Mapping[str, Any] | None = None
+    overwritten: bool = False
+
+
+@dataclasses.dataclass(frozen=True)
+class OldCorePoll:
+    restarted: bool = False
+    config: Mapping[str, Any] | None = None
+
+
+@pytest.fixture
+def new_core(monkeypatch):
+    monkeypatch.setattr(divoom_pixoo, "DevicePoll", NewCorePoll)
+
+
+@pytest.fixture
+def old_core(monkeypatch):
+    monkeypatch.setattr(divoom_pixoo, "DevicePoll", OldCorePoll)
+
+
+def test_another_clients_upload_is_reported_as_overwritten(pixoo, make_plugin, new_core):
+    plugin = make_plugin()
+    assert show(plugin).success
+    assert pixoo.foreign_upload()  # it displayed: the device's next id passed ours
+
+    assert plugin.poll_device() == NewCorePoll(overwritten=True)
+
+
+def test_after_an_overwrite_the_next_upload_displays_over_the_foreign_image(pixoo, make_plugin, new_core):
+    """The foreign upload raised the device's last id past ours: re-sending
+    with our old counter would be silently ignored."""
+    plugin = make_plugin()
+    show(plugin)
+    assert pixoo.foreign_upload(pic_id=50)
+    plugin.poll_device()
+    shown = len(pixoo.displayed)
+
+    assert show(plugin, 2).success
+    assert len(pixoo.displayed) == shown + 1
+    assert pixoo.ignored == []
+
+
+def test_an_overwrite_is_reported_once(pixoo, make_plugin, new_core):
+    plugin = make_plugin()
+    show(plugin)
+    pixoo.foreign_upload()
+    plugin.poll_device()
+
+    assert plugin.poll_device() is None
+
+
+def test_an_unchanged_counter_is_no_news_on_a_core_that_knows_overwrites(pixoo, make_plugin, new_core):
+    """Equal ids: no foreign upload displayed, or none the Pixoo can show us."""
+    plugin = make_plugin()
+    show(plugin)
+    show(plugin, 2)
+
+    assert plugin.poll_device() is None
+
+
+def test_a_lower_counter_is_still_a_restart_on_a_core_that_knows_overwrites(pixoo, make_plugin, new_core):
+    plugin = make_plugin()
+    show(plugin)
+    pixoo.power_cycle()
+
+    assert plugin.poll_device() == NewCorePoll(restarted=True)
+
+
+def test_a_failed_upload_is_still_a_restart_on_a_core_that_knows_overwrites(pixoo, make_plugin, new_core):
+    plugin = make_plugin()
+    show(plugin)
+    pixoo.mode = "http_500"
+    show(plugin, 2)
+    pixoo.mode = "ok"
+
+    assert plugin.poll_device() == NewCorePoll(restarted=True)
+
+
+def test_an_older_core_hears_an_overwrite_as_a_restart(pixoo, make_plugin, old_core):
+    """A core without ``overwritten`` still re-sends after a restart."""
+    plugin = make_plugin()
+    show(plugin)
+    pixoo.foreign_upload()
+
+    assert plugin.poll_device() == OldCorePoll(restarted=True)
+
+
+def test_an_older_core_also_gets_the_next_upload_displayed(pixoo, make_plugin, old_core):
+    plugin = make_plugin()
+    show(plugin)
+    pixoo.foreign_upload(pic_id=50)
+    plugin.poll_device()
+
+    assert show(plugin, 2).success
+    assert pixoo.ignored == []
+
+
+def test_a_core_without_the_hook_type_hears_nothing_of_an_overwrite(pixoo, make_plugin, monkeypatch):
+    plugin = make_plugin()
+    show(plugin)
+    pixoo.foreign_upload()
+    monkeypatch.setattr(divoom_pixoo, "DevicePoll", None)
+
+    assert plugin.poll_device() is None
+
+
+def test_the_core_under_test_gets_an_overwrite_in_the_shape_it_knows(pixoo, make_plugin):
+    plugin = make_plugin()
+    show(plugin)
+    pixoo.foreign_upload()
+
+    knows = "overwritten" in {f.name for f in dataclasses.fields(DevicePoll)}
+    expected = DevicePoll(overwritten=True) if knows else DevicePoll(restarted=True)
+    assert plugin.poll_device() == expected
 
 
 # --- moved to a new address -----------------------------------------------------------------

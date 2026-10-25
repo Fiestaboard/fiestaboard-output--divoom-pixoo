@@ -39,10 +39,18 @@ What the hardware labs (camera-timed, on a real Pixoo 64) settled:
 - **PicID policy.** A session (the first upload of an instance, or after a
   failed or cancelled one) starts with ``Draw/ResetHttpGifId`` and is
   seeded from ``Draw/GetHttpGifId`` (0 means 1); after
-  :data:`RESET_AFTER_PUSHES` frame pushes it resets again and restarts at 1.
+  :data:`RESET_AFTER_PUSHES` frame pushes it resets and re-seeds again.
   IDs only ever go up within a session: the device silently ignores a
   reused or lower PicID while still answering ``error_code`` 0, so 0 means
   "accepted", not "shown".
+- **Device poll** (core's ``poll_device`` hook, see :meth:`DivoomPixoo.poll_device`).
+  The device's next PicID below ours means it restarted, or another client
+  reset the counter before uploading (the common ``pixoo`` library does);
+  the two cannot be told apart, so both are ``restarted``. Above ours means
+  another client uploaded without resetting first (``overwritten``, or
+  ``restarted`` on a core without that field). Equal is not detectable. A
+  change that uploads nothing (the Divoom app switching channel) is
+  undetectable too.
 
 All device traffic goes through ``self.http`` (core's helper: the
 ``FIESTABOARD_OUTPUTS_ALLOW_HOSTS`` fence, no redirects, the run's cancel
@@ -99,6 +107,12 @@ try:
     from src.plugins import DevicePoll
 except ImportError:  # a core before the poll_device hook never polls: nothing to report
     DevicePoll = None  # type: ignore[assignment,misc]
+
+
+def _knows_overwritten() -> bool:
+    """Whether core's :class:`DevicePoll` has ``overwritten`` (FiestaBoard#2354)."""
+    return "overwritten" in getattr(DevicePoll, "__dataclass_fields__", {})
+
 
 logger = logging.getLogger(__name__)
 
@@ -531,13 +545,12 @@ class DivoomPixoo(OutputPluginBase):
         try:
             if cancel.cancelled:
                 return None
-            if self._next_pic_id is None:
+            if self._next_pic_id is None or self._pushes_since_reset + count > self.RESET_AFTER_PUSHES:
+                # The threshold re-seeds too: a reset the device ignored keeps
+                # its last id, and counting from 1 again would be ignored.
+                self._next_pic_id = None
                 if not self._start_session(cancel):
                     return None
-            elif self._pushes_since_reset + count > self.RESET_AFTER_PUSHES:
-                self._next_pic_id = None
-                self._post({"Command": RESET_GIF_ID}, setup=True)
-                self._next_pic_id, self._pushes_since_reset = 1, 0
             pic_id = self._next_pic_id
             assert pic_id is not None
             for offset, (pixels, speed) in enumerate(zip(frames, speeds, strict=True)):
@@ -825,17 +838,36 @@ class DivoomPixoo(OutputPluginBase):
     def poll_device(self) -> Any:
         """Core's between-writes look at the device (core's ``poll_device`` hook).
 
-        The Pixoo cannot say what it shows, but it can say it restarted: a
-        reboot wipes FiestaBoard's image back to the device's own clock face
-        AND resets its picture-id counter (``Draw/GetHttpGifId`` answered 1 on
-        the bench straight after a power-cycle). Reported as a restart, so
-        core re-sends the board's content even though the page has not
-        changed, when:
+        The Pixoo cannot say what it shows, but its picture-id counter
+        (``Draw/GetHttpGifId``, the next id) says a good deal. A reboot wipes
+        FiestaBoard's image back to the device's own clock face AND resets the
+        counter (it answered 1 on the bench straight after a power-cycle).
+        Reported as a restart, so core re-sends the board's content even
+        though the page has not changed, when:
 
         - the device's next id is below the one this instance would upload
-          next: it forgot every id since our last upload;
+          next: it forgot every id since our last upload. Another client
+          that resets the counter before uploading (the common ``pixoo``
+          library does) looks exactly the same; the counter cannot tell a
+          reboot from a foreign reset;
         - it answers again after an upload failed: whatever it shows now,
           core's last frame never reached it.
+
+        An upload displays only when its id is above the last accepted one,
+        so another client's upload that displayed without a reset first
+        leaves the device's next id ABOVE ours. Reported as ``overwritten`` (core marks the board out of
+        sync and re-sends unless the board's automatic restore is off); on a
+        core whose :class:`DevicePoll` has no ``overwritten`` field, as a
+        restart, which re-sends too. (A failed upload leaves no id of ours to
+        compare, so the two cases never co-occur.) An equal id is no news:
+        either nothing happened, or something the counter cannot show (an
+        app switching the channel without uploading, or a client that reset
+        and uploaded until the ids matched ours — the Pixoo cannot report
+        its pixels).
+
+        Either way the session restarts, so the next upload resets the
+        device's counter and is seeded from it: its id lands above the
+        foreign one and displays.
 
         When the saved address does not answer and a ``mac`` is saved (the
         Divoom cloud lookup fills it in), the Pixoo may have come back on a
@@ -854,12 +886,21 @@ class DivoomPixoo(OutputPluginBase):
         except Exception:
             return None
         device_next = reply.get("PicId")
-        forgot = (
-            isinstance(device_next, int)
-            and not isinstance(device_next, bool)
-            and self._next_pic_id is not None
-            and device_next < self._next_pic_id
-        )
+        ours = self._next_pic_id
+        known = isinstance(device_next, int) and not isinstance(device_next, bool) and ours is not None
+        forgot = known and device_next < ours
+        if known and device_next > ours:
+            logger.info(
+                "Pixoo %s: another client uploaded an image (next picture id %s, ours %s); "
+                "reporting the board overwritten",
+                self.host,
+                device_next,
+                ours,
+            )
+            self._restart_session()
+            if _knows_overwritten():
+                return DevicePoll(overwritten=True)
+            return DevicePoll(restarted=True)  # an older core: a restart re-sends too
         if not (forgot or self._upload_failed):
             return None
         logger.info(

@@ -6,6 +6,7 @@ from __future__ import annotations
 import threading
 import time
 
+from plugins import divoom_pixoo
 from plugins.divoom_pixoo import RESET_AFTER_PUSHES
 
 from src.outputs.plugin_base import CancelToken
@@ -41,14 +42,39 @@ def test_the_seed_is_the_device_s_next_id_when_a_reset_did_not_take(pixoo, make_
     assert pixoo.ignored == []
 
 
-def test_the_counter_resets_after_the_push_threshold_without_a_new_seed(pixoo, make_plugin):
+def test_the_counter_resets_and_re_seeds_after_the_push_threshold(pixoo, make_plugin):
     plugin = make_plugin()
     plugin.RESET_AFTER_PUSHES = 3
     for code in range(1, 6):
         assert write(plugin, code).success
-    assert pixoo.names() == [RESET, GET_ID, SEND, SEND, SEND, RESET, SEND, SEND]
+    assert pixoo.names() == [RESET, GET_ID, SEND, SEND, SEND, RESET, GET_ID, SEND, SEND]
     assert [c["PicID"] for c in pixoo.pushes()] == [1, 2, 3, 1, 2]
     assert pixoo.ignored == []
+
+
+def test_the_frame_after_a_threshold_reset_that_did_not_take_still_displays(pixoo, make_plugin):
+    """A reset the device ignored leaves its last id where it was: counting
+    from 1 again would be silently ignored, so the threshold re-seeds too."""
+    pixoo.ignore_reset = True
+    plugin = make_plugin()
+    plugin.RESET_AFTER_PUSHES = 3
+    for code in range(1, 5):
+        assert write(plugin, code).success
+    assert [c["PicID"] for c in pixoo.pushes()] == [1, 2, 3, 4]
+    assert pixoo.ignored == []
+
+
+def test_a_threshold_reset_that_did_not_take_is_not_reported_as_another_client(pixoo, make_plugin, monkeypatch):
+    """Our own frame after the threshold must not look like a foreign upload."""
+    from .test_device_poll import NewCorePoll
+
+    monkeypatch.setattr(divoom_pixoo, "DevicePoll", NewCorePoll)
+    pixoo.ignore_reset = True
+    plugin = make_plugin()
+    plugin.RESET_AFTER_PUSHES = 3
+    for code in range(1, 5):
+        assert write(plugin, code).success
+    assert plugin.poll_device() is None
 
 
 def test_the_threshold_is_at_most_32_pushes():
