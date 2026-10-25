@@ -62,7 +62,7 @@ to the `led_3x5` character set), so colours and icons in a page reach the screen
 
 | Setting | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `host` | string | Yes | — | The Pixoo's IP address or hostname, for example `192.168.1.50`. A port (`192.168.1.50:80`) is accepted; `http://` and any path are ignored. |
+| `host` | string | Yes | — | The Pixoo's IP address or hostname, optionally with a port and path. Defaults to HTTP port 80 `/post`; explicit HTTP(S) endpoints keep their port and path. Credentials, query strings and fragments are not supported. |
 | `brightness` | integer, 0–100 | No | the device's own | Screen brightness, set after the first frame lands. Leave it out to keep what you set in the Divoom app. |
 | `font` | `"5x7"` or `"3x5"` | No | `"5x7"` | **Text size** on the board screen. Large (`"5x7"`) draws 5×7-pixel letters on 8 rows × 10 columns: the easiest to read across a room, and lowercase reads well. Small (`"3x5"`) draws 3×5-pixel letters on 10 rows × 16 columns: more text fits, best in uppercase. Changing it resizes the board and its pages. New boards start Large; a board made before 0.5.0 keeps Small. |
 | `tile_gap` | `"gap"` or `"fill"` | No | `"gap"` | **Tile style** on the board screen. Gaps keeps the one-pixel line between neighbouring color tiles; Seamless lights it when both are the same color, so a row of tiles reads as one solid bar. A corner pixel lights only when all four cells around it match. |
@@ -88,6 +88,17 @@ It searches, in order:
 
 If nothing is found, type the address yourself: it is in the Divoom app under the device's
 settings, or in your router's list of connected devices.
+
+For a known custom endpoint, enter its full address in **Device address**, for example
+`http://192.0.2.10:9000/divoom_api`, then use **Test connection**. **Enter address manually**
+focuses that field; **Network to search** accepts a subnet or IP, not an endpoint URL.
+Discovery still probes port 80 `/post`. A custom endpoint must accept the same Pixoo JSON
+commands; a successful connection test alone does not prove image uploads work. The example
+is not a claim that a particular firmware supports that endpoint.
+
+Automatic cloud recovery is disabled for a custom port, path or HTTPS endpoint, because cloud
+entries identify the native port-80 API. Update such an endpoint manually if it changes.
+Explicit cloud lookup can also fill the address field with the native device address.
 
 **Ask Divoom's servers which Pixoos are on your network** is a separate, opt-in button. It sends
 one request to Divoom's cloud (`app.divoom-gz.com`). Divoom sees your public IP address and
