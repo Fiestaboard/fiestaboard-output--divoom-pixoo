@@ -117,6 +117,9 @@ empty (or add your Pixoo's address) to search a real network.
 - Puts the page back after the Pixoo restarts (the restart resets its picture ids, which the
   plugin checks between writes), and re-finds a Pixoo that moved to a new address by its saved
   MAC
+- Notices when another app or script uploads an image to the Pixoo, and tells FiestaBoard the
+  board was overwritten so it can put the page back (see
+  [What the device poll can and cannot detect](#what-the-device-poll-can-and-cannot-detect))
 - Connection test that tells unreachable, timed-out, wrong-device and blocked-host cases apart
 - **Orientation**: rotate the output image 0°, 90°, 180° or 270° clockwise to correct
   mounting, including every animation frame. Default 0° keeps existing boards unchanged;
@@ -186,6 +189,27 @@ accepted; a reused or lower id still answers `error_code` 0 but is silently igno
 - counts up by one per upload, never reusing or lowering an id;
 - resets again, restarting at 1, before the push that would pass 32 since the last reset. A reset
   does not clear the screen and needs no wait.
+
+### What the device poll can and cannot detect
+
+The Pixoo cannot report what it shows. Between writes, FiestaBoard polls it (core's
+`poll_device` hook) and the plugin compares the device's next id (`Draw/GetHttpGifId`) with the
+one it would upload next:
+
+| Device's next id | What it means | Reported to FiestaBoard |
+| --- | --- | --- |
+| Lower than ours | The Pixoo restarted (a reboot resets the counter), so FiestaBoard's image is gone | `restarted`: the page is sent again |
+| Higher than ours | Another client (the Divoom app, a script) uploaded an image that displayed: an upload displays only when its id is above the last accepted one | `overwritten`: the board is marked out of sync, and the page is sent again unless the board's **Restore automatically** setting is off. A FiestaBoard without `overwritten` gets `restarted`, which sends the page again |
+| Equal | Nothing detectable happened | Nothing |
+
+An upload that failed is also reported as `restarted` once the device answers again. After a
+restart or an overwrite the plugin starts a new id session (reset, then seed from the device),
+so its next upload is not ignored as a lower id.
+
+**Not detectable:** anything that changes the screen without an HTTP image upload that raises the
+counter: switching the channel or clock face in the Divoom app, a gallery or visualiser, or a
+client that resets the counter before uploading so the ids end up equal to ours. Those show until
+the page next changes (or you send it again by hand).
 
 **Timeouts and cancelling.** Every request goes through FiestaBoard's device helper
 (`self.http`), which enforces `FIESTABOARD_OUTPUTS_ALLOW_HOSTS`, follows no redirects and refuses

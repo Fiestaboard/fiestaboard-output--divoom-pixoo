@@ -20,7 +20,8 @@ PicIDs behave as the 2026-10-04 hardware lab measured: ``Draw/GetHttpGifId``
 answers the next id (0 right after a reset); an upload displays only when its
 PicID is above the last accepted one, and a reused or lower PicID still
 answers ``error_code`` 0 (recorded in ``ignored``). ``ignore_reset`` makes
-the device keep its last id across a reset.
+the device keep its last id across a reset. :meth:`foreign_upload` plays
+another client (the Divoom app, a script) uploading its own image.
 
 ``on_command`` (``fn(command_dict, index)``) runs before the answer, so a
 test can fire a cancel token after the k-th push.
@@ -130,6 +131,18 @@ class MockPixoo:
     def clear(self) -> None:
         with self._lock:
             self.commands = []
+
+    # --- other clients ---------------------------------------------------------------------
+
+    def foreign_upload(self, pic_id: int | None = None) -> bool:
+        """Another client uploads a one-frame image with *pic_id* (default:
+        the lowest id that displays). It obeys the same PicID rule as ours;
+        True when it displayed. Not recorded in ``commands``."""
+        pic_id = self.last_pic_id + 1 if pic_id is None else pic_id
+        if pic_id <= self.last_pic_id:
+            return False
+        self.last_pic_id = pic_id
+        return True
 
     # --- behaviour -------------------------------------------------------------------------
 

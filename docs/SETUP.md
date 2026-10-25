@@ -175,6 +175,16 @@ no authentication.
   restart within about half a minute and sends the page again. Needs a FiestaBoard with the
   device poll (`next` from October 2026); older versions wait until the page changes.
 
+**Another app changed the Pixoo's picture**
+
+- When another app or script uploads an image to the Pixoo, FiestaBoard notices within about half
+  a minute, marks the board as out of sync and sends the page again. Turn off the board's
+  **Restore automatically** setting to leave the other app's image up instead. Needs a
+  FiestaBoard that reports overwritten boards; older versions with the device poll treat it as a
+  restart and send the page again.
+- Changing the channel or clock face in the Divoom app, without uploading an image, cannot be
+  detected: the Pixoo does not report what it shows. The page comes back when it next changes.
+
 **The Pixoo stopped updating after a while**
 
 - Community reports say the device can freeze after many uploads. The plugin resets the device's
