@@ -62,6 +62,7 @@ ALL_CONF = {
 
 class MockPixoo:
     def __init__(self) -> None:
+        self.path = "/post"
         self.commands: list[dict[str, Any]] = []
         self.mode = "ok"
         self.freeze_after: int | None = None
@@ -139,7 +140,7 @@ class MockPixoo:
             self.commands.append(command)
         if self.on_command is not None:
             self.on_command(command, index)
-        if path != "/post":
+        if path != self.path:
             return 404, {"error": "not found"}
         if self.mode == "hang" or self._frozen:
             return None, None

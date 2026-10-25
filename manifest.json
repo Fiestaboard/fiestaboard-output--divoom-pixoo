@@ -31,7 +31,7 @@
         "host": {
           "type": "string",
           "title": "Device address",
-          "description": "The Pixoo 64's IP address or hostname on your network (for example 192.168.1.50). Use Find my Pixoo, or type it in.",
+          "description": "The Pixoo 64's IP address or hostname (for example 192.168.1.50), optionally with a port and HTTP(S) path. For an explicit endpoint, enter it here and use Test connection; Find my Pixoo searches port 80 /post only. The endpoint must speak the Pixoo JSON protocol.",
           "minLength": 1,
           "ui:widget": "device-picker",
           "ui:options": {

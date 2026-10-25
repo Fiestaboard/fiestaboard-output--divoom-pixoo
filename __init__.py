@@ -65,6 +65,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import replace
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -397,7 +398,26 @@ class DivoomPixoo(OutputPluginBase):
 
     @property
     def url(self) -> str:
-        return f"http://{self.host}/post"
+        """The explicit HTTP endpoint, or the standard Pixoo ``/post`` path."""
+        raw = str(self.config.get("host") or "").strip()
+        try:
+            endpoint = urlsplit(raw if _SCHEME.match(raw) else f"http://{raw}")
+            if (
+                endpoint.scheme not in {"http", "https"}
+                or not endpoint.hostname
+                or endpoint.username is not None
+                or endpoint.password is not None
+                or endpoint.query
+                or endpoint.fragment
+                or endpoint.port == 0
+            ):
+                raise ValueError("unsupported endpoint")
+        except ValueError as exc:
+            raise requests.exceptions.InvalidURL(
+                "Use an HTTP(S) device address with an optional port and path, without credentials, query or fragment."
+            ) from exc
+        path = endpoint.path if endpoint.path not in {"", "/"} else "/post"
+        return urlunsplit((endpoint.scheme, self.host, path, "", ""))
 
     # --- rendering ---------------------------------------------------------------------------
 
@@ -848,6 +868,14 @@ class DivoomPixoo(OutputPluginBase):
 
     def _refind(self) -> Any:
         """Find this board's Pixoo by its saved MAC after its address stopped answering."""
+        # Cloud entries name the native port-80 API, not a custom endpoint.
+        # Do not silently replace its port/path or persist a different endpoint.
+        try:
+            endpoint = urlsplit(self.url)
+        except requests.exceptions.InvalidURL:
+            return None
+        if endpoint.scheme != "http" or endpoint.port not in {None, 80} or endpoint.path != "/post":
+            return None
         mac = normalise_mac(self.config.get("mac"))
         if mac is None or time.monotonic() < self._next_refind_at:
             return None

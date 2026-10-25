@@ -108,7 +108,7 @@ the 64 × 64 output and page dimensions do not change.
 
 | Setting | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `host` | string | Yes | — | The Pixoo's IP address or hostname. A port is accepted (`192.168.1.50:80`); `http://` and any path are ignored. |
+| `host` | string | Yes | — | The Pixoo's IP address or hostname, optionally with a port and path. Defaults to HTTP port 80 `/post`; explicit HTTP(S) endpoints keep their port and path. Credentials, query strings and fragments are not supported. |
 | `orientation` | integer: `0`, `90`, `180`, `270` | No | `0` | Clockwise image correction for mounting. Preview and page dimensions stay unchanged. |
 | `brightness` | integer, 0–100 | No | the device's own | Screen brightness, applied after the first page lands. Leave it out to keep the brightness you set in the Divoom app. |
 | `font` | `"5x7"` or `"3x5"` | No | `"5x7"` | **Text size** on the board screen. Large (`"5x7"`) draws 5×7-pixel letters on 8 rows × 10 columns: the easiest to read across a room, and lowercase reads well. Small (`"3x5"`) draws 3×5-pixel letters on 10 rows × 16 columns: more text fits, best in uppercase. Changing it resizes the board and its pages. New boards start Large; a board made before 0.5.0 keeps Small. |
@@ -139,6 +139,19 @@ no authentication.
   one request to Divoom's cloud, which sees your public IP address. It also fills in the Pixoo's
   MAC address, so next time it can find the same Pixoo even if its address changed.
 - Or type the address from the Divoom app or your router.
+
+**Using an explicit endpoint**
+
+- **Enter address manually** focuses **Device address**. Put the full endpoint there, for
+  example `http://192.0.2.10:9000/divoom_api`, then select **Test connection**. A bare address
+  or trailing `/` still uses `/post`.
+- **Network to search** accepts an IP or subnet; it does not configure a port or path.
+  Discovery always uses port 80 `/post`.
+- The endpoint must accept Pixoo JSON commands, including `Channel/GetAllConf` and the image
+  upload commands. This example does not establish compatibility with any firmware or
+  gateway, and a passing connection test is not proof that image uploads will work.
+- Automatic cloud recovery will not replace a custom port, path or HTTPS endpoint. Update
+  it manually if it changes. An explicit cloud lookup can fill in the native port-80 address.
 
 **The connection test says it could not connect**
 
