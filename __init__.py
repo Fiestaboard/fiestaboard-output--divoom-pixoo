@@ -1,7 +1,8 @@
 """Divoom Pixoo 64 output plugin for FiestaBoard.
 
-Drives one Pixoo 64 over its local HTTP API (``POST http://<host>/post``,
-one JSON command per request). Core owns the policy — the send floor
+Drives one Pixoo 64 over its local HTTP API, one JSON command per request:
+``POST http://<host>/post`` by default, or the explicit HTTP(S) endpoint
+(port and path) the board's ``host`` setting names. Core owns the policy — the send floor
 (``min_interval_ms``, 1 s between writes), dedupe, preemption, the write
 budget and which LED transition a board runs — and this plugin moves pixels.
 
@@ -410,6 +411,9 @@ class DivoomPixoo(OutputPluginBase):
                 or endpoint.query
                 or endpoint.fragment
                 or endpoint.port == 0
+                # "http:/192.168.1.50" (one slash) parses as host "http" with an
+                # empty port; any empty port is a typo, not the default.
+                or endpoint.netloc.endswith(":")
             ):
                 raise ValueError("unsupported endpoint")
         except ValueError as exc:
@@ -912,6 +916,17 @@ class DivoomPixoo(OutputPluginBase):
             return ConnectionCheck.blocked(self.host)
         except _NoHost:
             return self._failed("unreachable", "No device address is set.", "No address", "Enter the Pixoo's IP address.")
+        except requests.exceptions.InvalidURL as exc:
+            # Not contacted: the address is refused before any request. The
+            # raw address is not echoed back, since it may carry credentials.
+            return self._failed(
+                "blocked",
+                "Not contacted: this is not a device address the Pixoo plugin can use.",
+                str(exc),
+                "Enter the Pixoo's IP address or hostname, or an HTTP or HTTPS address with an optional"
+                " port and path (for example 192.168.1.50 or http://192.168.1.50:9000/divoom_api).",
+                "Leave out any user name or password, ?query and #fragment; a port must be 1-65535.",
+            )
         except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as exc:
             return self._failed(
                 "unreachable",

@@ -1,7 +1,7 @@
 {
   "id": "divoom_pixoo",
   "name": "Divoom Pixoo 64",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Show your FiestaBoard pages on a Divoom Pixoo 64 LED matrix over your local network.",
   "author": "FiestaBoard Team",
   "repository": "https://github.com/Fiestaboard/fiestaboard-output--divoom-pixoo",
@@ -31,7 +31,7 @@
         "host": {
           "type": "string",
           "title": "Device address",
-          "description": "The Pixoo 64's IP address or hostname (for example 192.168.1.50), optionally with a port and HTTP(S) path. For an explicit endpoint, enter it here and use Test connection; Find my Pixoo searches port 80 /post only. The endpoint must speak the Pixoo JSON protocol.",
+          "description": "The Pixoo 64's IP address or hostname (for example 192.168.1.50), or a full HTTP(S) endpoint with a port and path.",
           "minLength": 1,
           "ui:widget": "device-picker",
           "ui:options": {
