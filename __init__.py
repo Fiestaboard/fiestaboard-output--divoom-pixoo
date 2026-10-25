@@ -1,7 +1,8 @@
 """Divoom Pixoo 64 output plugin for FiestaBoard.
 
-Drives one Pixoo 64 over its local HTTP API (``POST http://<host>/post``,
-one JSON command per request). Core owns the policy — the send floor
+Drives one Pixoo 64 over its local HTTP API, one JSON command per request:
+``POST http://<host>/post`` by default, or the explicit HTTP(S) endpoint
+(port and path) the board's ``host`` setting names. Core owns the policy — the send floor
 (``min_interval_ms``, 1 s between writes), dedupe, preemption, the write
 budget and which LED transition a board runs — and this plugin moves pixels.
 
@@ -65,6 +66,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import replace
 from functools import lru_cache
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
@@ -397,7 +399,29 @@ class DivoomPixoo(OutputPluginBase):
 
     @property
     def url(self) -> str:
-        return f"http://{self.host}/post"
+        """The explicit HTTP endpoint, or the standard Pixoo ``/post`` path."""
+        raw = str(self.config.get("host") or "").strip()
+        try:
+            endpoint = urlsplit(raw if _SCHEME.match(raw) else f"http://{raw}")
+            if (
+                endpoint.scheme not in {"http", "https"}
+                or not endpoint.hostname
+                or endpoint.username is not None
+                or endpoint.password is not None
+                or endpoint.query
+                or endpoint.fragment
+                or endpoint.port == 0
+                # "http:/192.168.1.50" (one slash) parses as host "http" with an
+                # empty port; any empty port is a typo, not the default.
+                or endpoint.netloc.endswith(":")
+            ):
+                raise ValueError("unsupported endpoint")
+        except ValueError as exc:
+            raise requests.exceptions.InvalidURL(
+                "Use an HTTP(S) device address with an optional port and path, without credentials, query or fragment."
+            ) from exc
+        path = endpoint.path if endpoint.path not in {"", "/"} else "/post"
+        return urlunsplit((endpoint.scheme, self.host, path, "", ""))
 
     # --- rendering ---------------------------------------------------------------------------
 
@@ -848,6 +872,14 @@ class DivoomPixoo(OutputPluginBase):
 
     def _refind(self) -> Any:
         """Find this board's Pixoo by its saved MAC after its address stopped answering."""
+        # Cloud entries name the native port-80 API, not a custom endpoint.
+        # Do not silently replace its port/path or persist a different endpoint.
+        try:
+            endpoint = urlsplit(self.url)
+        except requests.exceptions.InvalidURL:
+            return None
+        if endpoint.scheme != "http" or endpoint.port not in {None, 80} or endpoint.path != "/post":
+            return None
         mac = normalise_mac(self.config.get("mac"))
         if mac is None or time.monotonic() < self._next_refind_at:
             return None
@@ -884,6 +916,17 @@ class DivoomPixoo(OutputPluginBase):
             return ConnectionCheck.blocked(self.host)
         except _NoHost:
             return self._failed("unreachable", "No device address is set.", "No address", "Enter the Pixoo's IP address.")
+        except requests.exceptions.InvalidURL as exc:
+            # Not contacted: the address is refused before any request. The
+            # raw address is not echoed back, since it may carry credentials.
+            return self._failed(
+                "blocked",
+                "Not contacted: this is not a device address the Pixoo plugin can use.",
+                str(exc),
+                "Enter the Pixoo's IP address or hostname, or an HTTP or HTTPS address with an optional"
+                " port and path (for example 192.168.1.50 or http://192.168.1.50:9000/divoom_api).",
+                "Leave out any user name or password, ?query and #fragment; a port must be 1-65535.",
+            )
         except (requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as exc:
             return self._failed(
                 "unreachable",
